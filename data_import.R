@@ -1,6 +1,6 @@
 library(dplyr)
 
-load('Z:PNAB/portos_slv/portos_slv.Rdata')
+load('Z:/PNAB/portos_slv/portos_slv.Rdata')
 load("data/nautilus_occ.Rdata")
 
 bio_occ %>% group_by(ano, trim, estrategia_amostragem) %>%

@@ -1,7 +1,9 @@
 # Teste de splines
 library(ggplot2)
+library(dplyr)
 library(Runuran)
 
+load("data/nautilus_occ.Rdata")
 
 lota_naut_2$month = case_when(lota_naut_2$MES %in% c('10', '11', '12') ~ lota_naut_2$MES,
                               T ~ paste0("0",lota_naut_2$MES))
@@ -27,3 +29,4 @@ lota_naut_2 %>%
   geom_line(aes(x = month, y = fitted(ajuste), group = 1), col = 'purple') +
   geom_point(aes(x = month, y = fitted(ajuste)), col = 'red') +
   theme_bw()
+
