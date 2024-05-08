@@ -2,6 +2,10 @@ library(dplyr)
 
 load('Z:/PNAB/portos_slv/portos_slv.Rdata')
 load("data/nautilus_occ.Rdata")
+load("data/naut_occ_2023.Rdata")
+
+# actualiza dados de lota para tabela que inclui os de 2023
+bio_occ = occ_2023
 
 bio_occ %>% group_by(ano, trim, estrategia_amostragem) %>%
   summarise(cona = length(unique(id_viagem)))
@@ -137,7 +141,7 @@ lota_naut_2 =
   filter(estrategia_amostragem == "Concurrent Sampling") %>%
   filter(Sampling_type != 'OnBoard') %>% 
   filter(peso_total < 10000) %>% 
-  filter(ano <= 2022) %>% 
+  filter(ano <= 2023) %>% 
   transmute(id_viagem = factor(id_viagem),
             id_denominacao = factor(id_denominacao),
             id_caixa = factor(id_caixa),
