@@ -9,17 +9,18 @@ lota_naut_2$month = case_when(lota_naut_2$MES %in% c('10', '11', '12') ~ lota_na
                               T ~ paste0("0",lota_naut_2$MES))
 
 lota_naut_2 = lota_naut_2 %>% 
+  filter(REGIAO == '27.9.a.s.a') %>% 
   mutate(week = lubridate::week(DATA))
 
-lota_naut_2$pesos = 1/
-((lota_naut_2$peso_am_caixa / lota_naut_2$peso_total_caixa) *
-  (lota_naut_2$peso_amostrado_dom / lota_naut_2$land_kg)) 
+# lota_naut_2$pesos = 1/
+# ((lota_naut_2$peso_am_caixa / lota_naut_2$peso_total_caixa) *
+#   (lota_naut_2$peso_amostrado_dom / lota_naut_2$land_kg)) 
 
 hist(lota_naut_2$pesos)
 
 
 
-?loess
+# ?loess
 
 ajuste = loess(peso_total ~ week,
                data = lota_naut_2,
