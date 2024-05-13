@@ -1,6 +1,7 @@
 library(dplyr)
 library(CatDyn)
 library(ggplot2)
+library(Runuran)
 
 # Sintese das vendas
 load("C:/repos/occ_assessment/data/initial_data_occ_sumario.Rdata")
@@ -22,7 +23,8 @@ lota_naut_2$month = case_when(lota_naut_2$MES %in% c('10', '11', '12') ~ lota_na
 
 lota_naut_2 = lota_naut_2 %>%
   filter(REGIAO == '27.9.a.s.a') %>% 
-  mutate(week = lubridate::isoweek(DATA))
+  mutate(week = lubridate::isoweek(DATA),
+         peso_total = peso_total/1000)
 
 ajuste = loess(peso_total ~ week,
                data = lota_naut_2,
@@ -145,7 +147,7 @@ cat_95 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(1995)),
                          colmbw=10,
                          unitseff="trips",
                          unitscat="kg",
-                         unitsmbw="g",
+                         unitsmbw="kg",
                          nmult="thou",
                          season.dates=c(as.Date("1995-01-01"),
                                         as.Date("1995-12-25")))
@@ -189,8 +191,8 @@ ggplot() +
             group = 1,
             col = 'darkgreen') + 
   theme_bw() 
-  xlim(0,40) + 
-  ylim(300,350)
+  # xlim(0,40) + 
+  # ylim(300,350)
 
 
   
@@ -218,7 +220,7 @@ cat_96 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(1996)),
                        colmbw=10,
                        unitseff="trips",
                        unitscat="kg",
-                       unitsmbw="g",
+                       unitsmbw="kg",
                        nmult="thou",
                        season.dates=c(as.Date("1996-01-01"),
                                       as.Date("1996-12-30")))
@@ -256,7 +258,7 @@ cat_97 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(1997)),
                        colmbw=10,
                        unitseff="trips",
                        unitscat="kg",
-                       unitsmbw="g",
+                       unitsmbw="kg",
                        nmult="thou",
                        season.dates=c(as.Date("1997-01-01"),
                                       as.Date("1997-12-30")))
@@ -294,7 +296,7 @@ cat_98 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(1998)),
                        colmbw=10,
                        unitseff="trips",
                        unitscat="kg",
-                       unitsmbw="g",
+                       unitsmbw="kg",
                        nmult="thou",
                        season.dates=c(as.Date("1998-01-01"),
                                       as.Date("1998-12-30")))
@@ -332,7 +334,7 @@ cat_99 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(1999)),
                        colmbw=10,
                        unitseff="trips",
                        unitscat="kg",
-                       unitsmbw="g",
+                       unitsmbw="kg",
                        nmult="thou",
                        season.dates=c(as.Date("1999-01-01"),
                                       as.Date("1999-12-30")))
@@ -369,7 +371,7 @@ cat_00 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(2000)),
                        colmbw=10,
                        unitseff="trips",
                        unitscat="kg",
-                       unitsmbw="g",
+                       unitsmbw="kg",
                        nmult="thou",
                        season.dates=c(as.Date("2000-01-01"),
                                       as.Date("2000-12-30")))
@@ -407,7 +409,7 @@ cat_01 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(2001)),
                        colmbw=10,
                        unitseff="trips",
                        unitscat="kg",
-                       unitsmbw="g",
+                       unitsmbw="kg",
                        nmult="thou",
                        season.dates=c(as.Date("2001-01-01"),
                                       as.Date("2001-12-31")))
@@ -445,7 +447,7 @@ cat_02 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(2002)),
                        colmbw=10,
                        unitseff="trips",
                        unitscat="kg",
-                       unitsmbw="g",
+                       unitsmbw="kg",
                        nmult="thou",
                        season.dates=c(as.Date("2002-01-01"),
                                       as.Date("2002-12-30")))
@@ -482,7 +484,7 @@ cat_03 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(2003)),
                        colmbw=10,
                        unitseff="trips",
                        unitscat="kg",
-                       unitsmbw="g",
+                       unitsmbw="kg",
                        nmult="thou",
                        season.dates=c(as.Date("2003-01-01"),
                                       as.Date("2003-12-30")))
@@ -520,7 +522,7 @@ cat_04 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(2004)),
                        colmbw=10,
                        unitseff="trips",
                        unitscat="kg",
-                       unitsmbw="g",
+                       unitsmbw="kg",
                        nmult="thou",
                        season.dates=c(as.Date("2004-01-01"),
                                       as.Date("2004-12-30")))
@@ -557,7 +559,7 @@ cat_05 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(2005)),
                        colmbw=10,
                        unitseff="trips",
                        unitscat="kg",
-                       unitsmbw="g",
+                       unitsmbw="kg",
                        nmult="thou",
                        season.dates=c(as.Date("2005-01-01"),
                                       as.Date("2005-12-30")))
@@ -594,7 +596,7 @@ cat_06 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(2006)),
                        colmbw=10,
                        unitseff="trips",
                        unitscat="kg",
-                       unitsmbw="g",
+                       unitsmbw="kg",
                        nmult="thou",
                        season.dates=c(as.Date("2006-01-01"),
                                       as.Date("2006-12-24")))
@@ -631,7 +633,7 @@ cat_07 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(2007)),
                        colmbw=10,
                        unitseff="trips",
                        unitscat="kg",
-                       unitsmbw="g",
+                       unitsmbw="kg",
                        nmult="thou",
                        season.dates=c(as.Date("2007-01-01"),
                                       as.Date("2007-12-31")))
@@ -669,7 +671,7 @@ cat_08 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(2008)),
                        colmbw=10,
                        unitseff="trips",
                        unitscat="kg",
-                       unitsmbw="g",
+                       unitsmbw="kg",
                        nmult="thou",
                        season.dates=c(as.Date("2008-01-01"),
                                       as.Date("2008-12-30")))
@@ -707,7 +709,7 @@ cat_09 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(2009)),
                        colmbw=10,
                        unitseff="trips",
                        unitscat="kg",
-                       unitsmbw="g",
+                       unitsmbw="kg",
                        nmult="thou",
                        season.dates=c(as.Date("2009-01-01"),
                                       as.Date("2009-12-30")))
@@ -746,8 +748,8 @@ temp = df_effort %>%
   ungroup %>% 
   filter(year_sale %in% c(1995:2009)) %>%
   group_by(year_sale) %>% 
-  summarise(mbw = mean(mbw_rand/1000, na.rm =T),
-            se = sd(mbw_rand/1000, na.rm =T))
+  summarise(mbw = mean(mbw_rand, na.rm =T),
+            se = sd(mbw_rand, na.rm =T))
 
 
 compila =
@@ -758,8 +760,7 @@ CatDynBSD(inp_s,
 
 base = df_effort %>% 
   group_by(year_sale) %>% 
-  summarise(qvenda = sum(catch)/1000)
-
+  summarise(qvenda = sum(catch))
 
 compila %>% 
 ggplot() + 
