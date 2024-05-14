@@ -7,12 +7,23 @@ library(Runuran)
 load("C:/repos/occ_assessment/data/initial_data_occ_sumario.Rdata")
 
 # Sintetiza o dataframe
-df_effort =
-  vd %>%
-  # mutate(predicoes = pred) %>% 
-  group_by(year_sale, week, EGRUPART) %>% 
-  summarise(catch = sum(QVENDA),
-            effort = n_distinct(IEMBARCA))
+# df_effort =
+#   vd %>%
+#   mutate(week = case_when(week == 53 ~ 52,
+#                           T ~ week)) %>% 
+#   group_by(year_sale, week, IEMBARCA) %>% 
+#   summarise(catch_i = sum(QVENDA),
+#             effort_i = n_distinct(IDATVEND)) %>% 
+#   # mutate(predicoes = pred) %>% 
+#   group_by(year_sale, week) %>% 
+#   summarise(catch = sum(catch_i, na.rm =T),
+#             effort = sum(effort_i, na.rm =T))
+# 
+# 
+# save(df_effort, file = 'data/df_effort.Rdata')
+load('data/df_effort.Rdata')
+
+# Elimina semana 53
 
 
 # Usa concurrent sampling para criar modelo de splines
@@ -24,7 +35,9 @@ lota_naut_2$month = case_when(lota_naut_2$MES %in% c('10', '11', '12') ~ lota_na
 lota_naut_2 = lota_naut_2 %>%
   filter(REGIAO == '27.9.a.s.a') %>% 
   mutate(week = lubridate::isoweek(DATA),
-         peso_total = peso_total/1000)
+         peso_total = peso_total/1000,
+         week = case_when(week == 53 ~ 52,
+                          T ~ week))
 
 ajuste = loess(peso_total ~ week,
                data = lota_naut_2,
@@ -32,9 +45,9 @@ ajuste = loess(peso_total ~ week,
 
 
 # acrescenta semanas que faltam
-predicos = predict(ajuste, newdata = c(1:53), se = T)
+predicos = predict(ajuste, newdata = c(1:52), se = T)
 
-cobaia = data.frame(semana = c(1:53), 
+cobaia = data.frame(semana = c(1:52), 
                     res = predicos$fit,
                     res.se = predicos$se.fit)
 cobaia$mbw = imputeTS::na_interpolation(cobaia$res)
@@ -53,7 +66,8 @@ df_effort = df_effort %>%
 #            )
 
 df_effort = df_effort %>% 
-  mutate(mbw_rand = urnorm(1, mean = mbw, sd = 2*se, lb = 0))
+  rowwise() %>% 
+  mutate(mbw_rand = urnorm(1, mean = mbw, sd = 2*se))
 
 df_effort %>% 
   ggplot() +
@@ -139,7 +153,7 @@ plotador = function(data, model, pre = T, post1 = T, post2 = T){
 
 # funcao que tapa buracos de defeso
 defeso = function(df){
-  semanas =c(1:53)[!(c(1:53) %in% unique(df$week))]
+  semanas =c(1:52)[!(c(1:52) %in% unique(df$week))]
   ref = df_effort %>% filter(year_sale == 2000)
   
   for(i in semanas){
@@ -164,15 +178,15 @@ defeso = function(df){
 cat_95 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(1995)),
                          step="week",
                          fleet.name="Polyvalent-S",
-                         coleff=5,
-                         colcat=4,
-                         colmbw=10,
+                         coleff=4,
+                         colcat=3,
+                         colmbw=9,
                          unitseff="trips",
                          unitscat="kg",
                          unitsmbw="kg",
                          nmult="thou",
                          season.dates=c(as.Date("1995-01-01"),
-                                        as.Date("1995-12-25")))
+                                        as.Date("1995-12-24")))
 
 
 plot.CatDynData(cat_95,
@@ -183,14 +197,14 @@ plot.CatDynData(cat_95,
 fit_95_1 = 
   trialer(cat_95,
           p = 2,
-          M = 1/53,
+          M = 1/52,
           N0.ini = 20000, #millions, as in nmult
           P.ini = list(10000,10000), #2 elementos porque sao 2 perturbacaoes
           k.ini = 0.01,
           alpha.ini = 0.5,
           beta.ini  = 0.5,
-          P = list(46, 48),
-          distr = 'normal',
+          P = list(48, 49),
+          distr = 'lognormal',
           method = 'spg',
           itnmax = 100000,
           disp = 50)
@@ -218,19 +232,6 @@ ggplot() +
 
 
   
-
-lota_naut_2 %>% 
-  # group_by(MES) %>% 
-  ggplot +
-  
-  geom_point(aes(x = week, y = peso_total)) +
-  geom_line(aes(x = week, y = fitted(ajuste), group = 1), col = 'purple') +
-  geom_point(aes(x = week, y = fitted(ajuste)), col = 'red') +
-  geom_line(data = cobaia, aes(x = semana,
-                               y = res,
-                               group = 1),
-            color = 'green') +
-  theme_bw()
 
 
 # Teste Maratona
@@ -1315,7 +1316,8 @@ base2 = df_effort %>%
             effort = sum(effort))
 
 base2 %>% 
-  filter(week %in% c(25,53)) %>% 
+  # filter(year_sale %in% c(2009:2011)) %>% 
+  # filter(week %in% c(25,53)) %>% 
   ggplot + 
   geom_line(aes(
     x = paste(year_sale, week),
@@ -1323,7 +1325,8 @@ base2 %>%
     group = 1)) 
 
 base2 %>% 
-  filter(week %in% c(25,53)) %>% 
+  # filter(year_sale %in% c(2009:2011)) %>%
+  # filter(week %in% c(25,53)) %>% 
   ggplot + 
   geom_line(aes(
     x = paste(year_sale, week),
@@ -1337,7 +1340,7 @@ base2 %>%
 compila %>% 
 ggplot() + 
   geom_line(aes(x = factor(Year),
-                y = unlist(B0Tot.ton)),
+                y = unlist(B0Tot.ton)/max(unlist(B0Tot.ton))),
             col = 'red',
             group = 1) +
   # geom_line(aes(x = Year,
@@ -1346,7 +1349,7 @@ ggplot() +
   #           group = 1) + 
   geom_line(data = base,
             aes(x = year_sale,
-                y = qvenda),
+                y = qvenda/max(qvenda)),
             col = 'blue',
             group =1) + 
   theme_bw()
