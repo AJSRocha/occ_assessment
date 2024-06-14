@@ -91,17 +91,31 @@ trialer = function(data, p, M, N0.ini, P.ini, k.ini,
                    alpha.ini, beta.ini, P,
                    distr, method, itnmax, disp = list()){
   
-  pars.ini = log(c(M,
-                   N0.ini,
-                   unlist(P.ini), # estimativa de amplitude da perturbacao
-                   k.ini,
-                   alpha.ini,
-                   beta.ini,
-                   unlist(disp)))
-  
-  dates = c(head(data$Data[[1]]$time.step,1),
-            unlist(P), #estimativa do timing da perturbacao
-            tail(data$Data[[1]]$time.step,1))
+  if(p>0){
+    pars.ini = log(c(M,
+                     N0.ini,
+                     unlist(P.ini), # estimativa de amplitude da perturbacao
+                     k.ini,
+                     alpha.ini,
+                     beta.ini,
+                     unlist(disp)))
+    
+    dates = c(head(data$Data[[1]]$time.step,1),
+              unlist(P), #estimativa do timing da perturbacao
+              tail(data$Data[[1]]$time.step,1))}
+  else{
+    pars.ini = log(c(M,
+                     N0.ini,
+                     # unlist(P.ini), # estimativa de amplitude da perturbacao
+                     k.ini,
+                     alpha.ini,
+                     beta.ini,
+                     unlist(disp)))
+    
+    dates = c(head(data$Data[[1]]$time.step,1),
+              # unlist(P), #estimativa do timing da perturbacao
+              tail(data$Data[[1]]$time.step,1))
+  }
   
   res = list()
   
@@ -200,6 +214,37 @@ plot.CatDynData(cat_95,
                 mark = T,
                 offset = c(0,1,10),
                 hem = 'N')
+
+# PASSO 1 - Modelo nulo
+
+
+fit_95_null = 
+  trialer(cat_95,
+          p = 0,
+          M = 1/52,
+          N0.ini = 20000, #millions, as in nmult
+          P.ini = list(10000), #2 elementos porque sao 2 perturbacaoes
+          k.ini = 0.01,
+          alpha.ini = 0.5,
+          beta.ini  = 0.5,
+          distr = 'gamma',
+          method = 'spg',
+          itnmax = 100000,
+          disp = 50)
+
+# PASSO 2 - Usar o pre-fit para fazer este plot
+plot(fit_95_null$pre_fit,
+     leg.pos = 'top',
+     Biom.tstep = 30,
+     Cat.tstep = 30,
+     Biom.xpos = 1,
+     Biom.ypos = 1,
+     Cat.xpos = 1,
+     Cat.ypos = 1,
+     diagnostics.panels = TRUE)
+
+
+# PASSO 3 - Começa a acrescentar outros fits
 
 fit_95_1 = 
   trialer(cat_95,
