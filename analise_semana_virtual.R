@@ -2,6 +2,7 @@ library(dplyr)
 library(CatDyn)
 library(ggplot2)
 library(Runuran)
+set.seed(123)
 
 # Sintese das vendas
 load("C:/repos/occ_assessment/data/initial_data_occ_sumario.Rdata")
@@ -91,14 +92,16 @@ trialer = function(data, p, M, N0.ini, P.ini, k.ini,
                    alpha.ini, beta.ini, P,
                    distr, method, itnmax, disp = list()){
   
+  # psi.ini   = 0.33*sd(log(data$Data$`Polyvalent-S`$obscat.thou))^2
+  
+  
   if(p>0){
     pars.ini = log(c(M,
                      N0.ini,
                      unlist(P.ini), # estimativa de amplitude da perturbacao
                      k.ini,
                      alpha.ini,
-                     beta.ini,
-                     unlist(disp)))
+                     beta.ini))
     
     dates = c(head(data$Data[[1]]$time.step,1),
               unlist(P), #estimativa do timing da perturbacao
@@ -109,13 +112,21 @@ trialer = function(data, p, M, N0.ini, P.ini, k.ini,
                      # unlist(P.ini), # estimativa de amplitude da perturbacao
                      k.ini,
                      alpha.ini,
-                     beta.ini,
-                     unlist(disp)))
+                     beta.ini))
+    
+    
+    # negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution  
+    
+
     
     dates = c(head(data$Data[[1]]$time.step,1),
               # unlist(P), #estimativa do timing da perturbacao
               tail(data$Data[[1]]$time.step,1))
   }
+  
+  if(distr %in% c('negbin','normal','lognormal','gamma')){
+    pars.ini = c(pars.ini, log(unlist(disp)))
+  }  
   
   res = list()
   
@@ -230,7 +241,7 @@ fit_95_null =
           distr = 'gamma',
           method = 'spg',
           itnmax = 100000,
-          disp = 50)
+          disp = list(50))
 
 # PASSO 2 - Usar o pre-fit para fazer este plot
 plot(fit_95_null$pre_fit,
@@ -244,25 +255,46 @@ plot(fit_95_null$pre_fit,
      diagnostics.panels = TRUE)
 
 
-# PASSO 3 - Começa a acrescentar outros fits
+distribuicoes = c("gamma", "lognormal","normal","negbin","aplnormal", "apnormal")
+optimizadores = c('CG', 'spg', 'BFGS', 'Nelder-Mead')
 
-fit_95_1 = 
-  trialer(cat_95,
-          p = 2,
-          M = 1/52,
-          N0.ini = 20000, #millions, as in nmult
-          P.ini = list(10000,10000), #2 elementos porque sao 2 perturbacaoes
-          k.ini = 0.01,
-          alpha.ini = 0.5,
-          beta.ini  = 0.5,
-          P = list(48, 49),
-          distr = 'gamma',
-          method = 'spg',
-          itnmax = 100000,
-          disp = 50)
+gdm_log_95 = data_frame(distr = character(),
+                        methods = character())
+modelos_gdm_95 = list()
+for(i in distribuicoes){
+  for(j in optimizadores){
+    tryCatch({
+      modelos_gdm_95[[length(modelos_gdm_95)+1]] = 
+           trialer(cat_95,
+                   p = 2,
+                   M = 1/52,
+                   N0.ini = 20000, #millions, as in nmult
+                   P.ini = list(10000,10000), #2 elementos porque sao 2 perturbacaoes
+                   k.ini = 0.01,
+                   alpha.ini = 0.5,
+                   beta.ini  = 0.5,
+                   P = list(48, 49),
+                   distr = i,
+                   method = j,
+                   itnmax = 100000,
+                   disp = 0.33*sd(log(cat_95$Data$`Polyvalent-S`$obscat.thou))^2)
+      gdm_log_95[nrow(gdm_log_95)+1,1] = i
+      gdm_log_95[nrow(gdm_log_95),2] = j
+      },
+      error=function(e){print(paste(i,j))
+        })
+  }
+}
 
-CatDynPar(fit_95_1$fit, 'spg')
-pred = CatDynPred(fit_95_1$fit,"spg")
+
+resultados = lapply(modelos_gdm_95, function(x){x$fit})
+
+CatDynSum(x=resultados,
+          season=1990,
+          method=gdm_log_95$methods[1:22])
+
+
+ # PASSO 3 - Começa a acrescentar outros fits
 
 
 dev.off()
