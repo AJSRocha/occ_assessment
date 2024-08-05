@@ -90,10 +90,10 @@ for(i in range_r){
                   nt = 5, # thinning interval of saved iterations
                   nb = 5000, #burn-in
                   nc = 2, #number of mcmc chains initial values
-                  init.values = FALSE, # 
+                  init.values = T, # 
                   init.K = i,
                   init.r = 0.81,
-                  init.q = NULL,
+                  init.q = rep(3,1),
                   peels = NULL, # NULL, # retro peel option
                   do.ppc = TRUE, # conducts and saves posterior predictive checks
                   save.trj = TRUE, # adds posteriors of stock, harvest and bk trajectories
