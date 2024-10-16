@@ -202,6 +202,9 @@ defeso = function(df){
 last_date_of_week = function(year, week){strptime(paste(year, week, 1), format = "%Y %W %u")}
 
 
+
+
+
 # Prepara dataframes para catdtn
 
 cat_95 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(1995)),
@@ -220,6 +223,11 @@ cat_95 = as.CatDynData(x=df_effort %>% filter(year_sale %in% c(1995)),
                                         
 last_date_of_week(1995, 52)-1
 
+distribuicoes = c("gamma", "lognormal","normal","negbin","aplnormal", "apnormal")
+optimizadores = c('CG', 'spg', 'BFGS', 'Nelder-Mead')
+
+
+###########################
 
 plot.CatDynData(cat_95,
                 mark = T,
@@ -255,8 +263,7 @@ plot(fit_95_null$pre_fit,
      diagnostics.panels = TRUE)
 
 
-distribuicoes = c("gamma", "lognormal","normal","negbin","aplnormal", "apnormal")
-optimizadores = c('CG', 'spg', 'BFGS', 'Nelder-Mead')
+
 
 gdm_log_95 = data_frame(distr = character(),
                         methods = character())
@@ -316,6 +323,10 @@ ggplot() +
 
 
   
+
+
+
+
 
 
 # Teste Maratona

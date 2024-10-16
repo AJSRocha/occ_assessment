@@ -148,26 +148,69 @@ cat_df$Data$`Polyvalent-S` %>%
   theme_bw() + 
   theme(legend.position = 'none')
 
+
+p = 25
+M = 0.05
+N0.ini = 15000 #millions, as in nmult
+P = indice_manual
+P.ini = list(rep(200000, 25)) #2 elementos porque sao 2 perturbacaoes
+k.ini = 0.00005
+alpha.ini = 1
+beta.ini  = 0.5
+disp = list(50)
+
+pars.ini = log(c(M,
+                 N0.ini,
+                 unlist(P.ini), # estimativa de amplitude da perturbacao
+                 k.ini,
+                 alpha.ini,
+                 beta.ini,
+                 unlist(disp)))
+
+pre_fit =
+catdynexp(x=cat_df,
+          p=25,
+          par=pars.ini,
+          dates=c(head(cat_df$Data[[1]]$time.step,1),
+                  unlist(indice_manual), #estimativa do timing da perturbacao
+                  tail(cat_df$Data[[1]]$time.step,1)),
+          distr='gamma')
+
+# View(pre_fit$Model$Results)
+plot(pre_fit$Model$Results$Predicted.Catch.kg ~ pre_fit$Model$Results$Observed.Catch.kg)
+abline(a=0, b=1)
+
+
+
+
 fit_null = 
   trialer(cat_df,
           p = 25,
-          M = 0.05,
-          N0.ini = 15000, #millions, as in nmult
+          M = 0.0005,
+          N0.ini = 250000, #millions, as in nmult
           P = indice_manual,
-          P.ini = list(10000,10000,10000,
-                       10000,10000,10000,
-                       10000,10000,10000,
-                       10000,10000,10000,
-                       10000,10000,10000,
-                       10000,10000,10000,
-                       10000,10000,10000,
-                       10000,10000,10000,
-                       10000), #2 elementos porque sao 2 perturbacaoes
-          k.ini = 0.00005,
-          alpha.ini = 1,
-          beta.ini  = 0.5,
-          distr = 'aplnormal',
+          P.ini = list(rep(250000, 25)), #2 elementos porque sao 2 perturbacaoes
+          k.ini = 0.00001,
+          alpha.ini = 0.1,
+          beta.ini  = 0.1,
+          distr = 'normal',
           method = 'spg',
-          itnmax = 100000,
-          disp = list(50))
-.
+          itnmax = 10000,
+          disp = list(100))
+
+fit_null$Model$spg$AIC
+
+# 
+CatDynFit(x = cat_df,
+          p = p,
+          par = pars.ini,
+          dates = c(head(cat_df$Data[[1]]$time.step,1),
+                    unlist(indice_manual), #estimativa do timing da perturbacao
+                    tail(cat_df$Data[[1]]$time.step,1)),
+          distr = 'normal',
+          method = 'spg',
+          itnmax = 100)
+
+fit_null$Model$spg$AIC
+
+CatDynPred(fit_null,'')
