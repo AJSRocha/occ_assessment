@@ -89,7 +89,7 @@ source('funcoes_catdyn.R')
 # Começando
 cat_df = as.CatDynData(x=df_effort %>% 
                          filter(as.numeric(
-                           as.character(year_sale)) >= 1999),
+                           as.character(year_sale)) %in% c(1999:2023)),
                        step="month",
                        fleet.name="Polyvalent-S",
                        coleff=4,
@@ -124,13 +124,14 @@ for(i in 1:nrow(detectados)){
 }
 
 indice_manual = 
-  list(12,12,12,12,12,
+  list(
+    12,12,12,12,12,
        12,10,10,11,12,
        12,12,10,11,12,
        11,12,10,12,11,
        12,12,12,12,10)
 
-for(i in 0:24){
+for(i in 0:(length(indice_manual)-1)){
   indice_manual[[i+1]] = 12*i + indice_manual[[i+1]]
 }
 
@@ -181,24 +182,28 @@ plot(pre_fit$Model$Results$Predicted.Catch.kg ~ pre_fit$Model$Results$Observed.C
 abline(a=0, b=1)
 
 
-
+#'Nelder-Mead', 'BFGS', 'CG', 'L-BFGS-B',
+#' 'nlm', 'nlminb', 'spg', 'ucminf', 'newuoa',
+#'  'bobyqa', 'nmkb', 'hjkb', 'Rcgmin', or 'Rvmmin'.
 
 fit_null = 
   trialer(cat_df,
           p = 25,
-          M = 0.0005,
-          N0.ini = 250000, #millions, as in nmult
+          M = 0.05976,
+          N0.ini = 14020, #millions, as in nmult
           P = indice_manual,
-          P.ini = list(rep(250000, 25)), #2 elementos porque sao 2 perturbacaoes
-          k.ini = 0.00001,
-          alpha.ini = 0.1,
-          beta.ini  = 0.1,
-          distr = 'normal',
+          P.ini = list(rep(15000, 25)), #2 elementos porque sao 2 perturbacaoes
+          k.ini = 0.0003546,
+          alpha.ini = 1.1455,
+          beta.ini  = 0.6134,
+          distr = 'aplnormal',
           method = 'spg',
           itnmax = 10000,
-          disp = list(100))
+          disp = list(1000))
 
 fit_null$Model$spg$AIC
+
+
 
 # 
 CatDynFit(x = cat_df,
