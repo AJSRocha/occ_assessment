@@ -6,32 +6,32 @@ library(wesanderson)
 set.seed(123)
 
 # Sintese das vendas
-# load("C:/repos/occ_assessment/data/initial_data_occ_sumario.Rdata")
-# 
-# # Sintetiza o dataframe
-# # df_effort =
-# #   vd %>%
-# #   # mutate(week = case_when(week == 53 ~ 52,
-# #   #                         T ~ week)) %>%
-# #   group_by(year_sale, month_sale, IEMBARCA) %>%
-# #   summarise(catch_i = sum(QVENDA),
-# #             effort_i = n_distinct(IDATVEND)) %>%
-# #   # mutate(predicoes = pred) %>%
-# #   group_by(year_sale, month_sale) %>%
-# #   summarise(catch = sum(catch_i, na.rm =T),
-# #             effort = sum(effort_i, na.rm =T))
-# # 
-# # 
-# # save(df_effort, file = 'data/df_effort_m.Rdata')
-# load('data/df_effort_m.Rdata')
-# 
+# load("C:/repos/occ_assessment/data/initial_data_occ_sumario_otb.Rdata")
+
+# Sintetiza o dataframe
+# df_effort =
+#   vd %>%
+#   # mutate(week = case_when(week == 53 ~ 52,
+#   #                         T ~ week)) %>%
+#   group_by(year_sale, month_sale, IEMBARCA) %>%
+#   summarise(catch_i = sum(QVENDA),
+#             effort_i = n_distinct(IDATVEND)) %>%
+#   # mutate(predicoes = pred) %>%
+#   group_by(year_sale, month_sale) %>%
+#   summarise(catch = sum(catch_i, na.rm =T),
+#             effort = sum(effort_i, na.rm =T))
+
+
+# save(df_effort, file = 'data/df_effort_m_otb.Rdata')
+# load('data/df_effort_m_otb.Rdata')
+
 # source('data_import.R')
-# 
+
 # lota_naut_2$month = case_when(lota_naut_2$MES %in% c('10', '11', '12') ~ lota_naut_2$MES,
 #                               T ~ paste0("0",lota_naut_2$MES))
 # 
 # lota_naut_2 = lota_naut_2 %>%
-#   filter(REGIAO == '27.9.a.s.a') %>% 
+#   filter(REGIAO == '27.9.a.s.a') %>%
 #   mutate(week = lubridate::isoweek(DATA),
 #          peso_total = peso_total/1000,
 #          week = case_when(week == 53 ~ 52,
@@ -45,10 +45,10 @@ set.seed(123)
 # # acrescenta semanas que faltam
 # predicos = predict(ajuste, newdata = c(1:12), se = T)
 # 
-# cobaia = data.frame(mes = c(1:12), 
+# cobaia = data.frame(mes = c(1:12),
 #                     res = predicos$fit,
 #                     res.se = predicos$se.fit)
-# cobaia = cobaia %>% 
+# cobaia = cobaia %>%
 #   mutate(mes = stringr::str_pad(mes, 2, pad = "0"))
 # 
 # # cobaia$mbw = imputeTS::na_interpolation(cobaia$res)
@@ -62,12 +62,12 @@ set.seed(123)
 #             cobaia,
 #             by = c('month_sale' = 'mes'))
 # 
-# df_effort = df_effort %>% 
-#   rowwise() %>% 
-#   mutate(mbw_rand = urnorm(1, mean = res, sd = 6*res.se)) %>% 
+# df_effort = df_effort %>%
+#   rowwise() %>%
+#   mutate(mbw_rand = urnorm(1, mean = res, sd = 6*res.se)) %>%
 #   ungroup()
 # 
-# df_effort %>% 
+# df_effort %>%
 #   ggplot() +
 #   geom_line(aes(x = month_sale,
 #                 y = res),
@@ -75,12 +75,12 @@ set.seed(123)
 #   geom_line(aes(x = month_sale,
 #                 y = mbw_rand),
 #             group = 1,
-#             color = 'red') + 
-#   facet_wrap(year_sale ~.) + 
+#             color = 'red') +
+#   facet_wrap(year_sale ~.) +
 #   theme_bw()
 # 
-# save(df_effort, file = 'data/df_effort_m_mbw.Rdata')
-load('data/df_effort_m_mbw.Rdata')
+# save(df_effort, file = 'data/df_effort_m_mbw_otb.Rdata')
+load('data/df_effort_m_mbw_otb.Rdata')
 
 # Funcoes catdyn
 source('funcoes_catdyn.R')
@@ -150,22 +150,13 @@ cat_df$Data$`Polyvalent-S` %>%
   theme(legend.position = 'none')
 
 
-p = 25
-M = 0.05
-N0.ini = 15000 #millions, as in nmult
-P = indice_manual
-P.ini = list(rep(200000, 25)) #2 elementos porque sao 2 perturbacaoes
-k.ini = 0.00005
-alpha.ini = 1
-beta.ini  = 0.5
-disp = list(50)
 
 pars.ini = log(c(M,
-                 N0.ini,
+                 N0,
                  unlist(P.ini), # estimativa de amplitude da perturbacao
-                 k.ini,
-                 alpha.ini,
-                 beta.ini,
+                 k,
+                 alpha,
+                 beta,
                  unlist(disp)))
 
 pre_fit =
@@ -186,20 +177,41 @@ abline(a=0, b=1)
 #' 'nlm', 'nlminb', 'spg', 'ucminf', 'newuoa',
 #'  'bobyqa', 'nmkb', 'hjkb', 'Rcgmin', or 'Rvmmin'.
 
-fit_null = 
+# fit_null = 
+#   trialer(cat_df,
+#           p = 25,
+#           M = 0.05976,
+#           N0.ini = 14020, #millions, as in nmult
+#           P = indice_manual,
+#           P.ini = list(rep(15000, 25)), #2 elementos porque sao 2 perturbacaoes
+#           k.ini = 0.0003546,
+#           alpha.ini = 1.1455,
+#           beta.ini  = 0.6134,
+#           distr = 'aplnormal',
+#           method = 'spg',
+#           itnmax = 10000,
+#           disp = list(1000))
+
+
+fit_null =
   trialer(cat_df,
           p = 25,
           M = 0.05976,
-          N0.ini = 14020, #millions, as in nmult
+          N0.ini = 30000, #millions, as in nmult
           P = indice_manual,
-          P.ini = list(rep(15000, 25)), #2 elementos porque sao 2 perturbacaoes
-          k.ini = 0.0003546,
-          alpha.ini = 1.1455,
-          beta.ini  = 0.6134,
+          P.ini  = list(20000,20000,20000,40000,20000,
+                       20000,20000,20000,100000,20000,
+                       20000,20000,20000,50000,20000,
+                       20000,20000,20000,20000,20000,
+                       20000,20000,40000,20000,20000), #2 elementos porque sao 2 perturbacaoes
+          k.ini = 0.00005,
+          alpha.ini = 0.9,
+          beta.ini  = 0.9,
           distr = 'aplnormal',
-          method = 'spg',
+          method = 'CG',
           itnmax = 10000,
-          disp = list(1000))
+          disp = list(5000))
+
 
 fit_null$Model$spg$AIC
 
