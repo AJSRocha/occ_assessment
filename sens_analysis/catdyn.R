@@ -2,9 +2,10 @@ df = cat_df$Data$`Polyvalent-S`
 df$Ct = 0 # funcao depende disso
 
 # Funcoes catdyn
-source('funcoes_catdyn.R')
+source('.scripts/funcoes_catdyn.R')
 
-P.ini = list(20000,20000,20000,40000,20000,
+P.ini = list(
+              20000,20000,20000,40000,20000,
              20000,20000,20000,100000,20000,
              20000,20000,20000,50000,20000,
              20000,20000,20000,20000,20000,
@@ -20,7 +21,7 @@ perturbacoes = data.frame(
 )
 
 
-teste=
+teste =
   simulador(data = df,
             k = 0.00002,
             alpha = .8,
@@ -29,16 +30,13 @@ teste=
             N0 = 30000)
 
 ensaio = list()
-intervalo = c(0.00005,0.00001,
-              0.000005,0.000001,
-              0.0000005,0.0000001,
-              0.00000005,0.00000001)
+intervalo = seq(0.1,0.5,0.05)
 for(j in 1:length(intervalo)){
   ensaio[[j]] = simulador(data = df,
                                 k = 0.00005,
-                                alpha = 0.8,
-                                beta = 0.8,
-                                M = 0.25,
+                                alpha = 0.9,
+                                beta = 0.9,
+                                M = 0.01,
                                 N0 = 30000)
   
 }
@@ -70,5 +68,5 @@ resultados = data.frame(parametro = rep(intervalo, each = length(ensaio[[1]])),
   scale_color_manual(values = colorRampPalette(wes_palette('Zissou1'))(length(unique(resultados$parametro)))) + 
   theme_bw() + 
   theme(legend.position = 'right') + 
-    labs(color = '', title = '')
+    labs(color = '', title = '') 
 

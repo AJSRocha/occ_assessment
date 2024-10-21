@@ -122,7 +122,7 @@ catch_module = function(index,M){ #index é o t na formulacao original
   return(res)
 }
 
-recruit_module = function(index){ #index é o t na formulacao original
+recruit_module = function(index, M){ #index é o t na formulacao original
   contador = 1
   res = 0
   while(perturbacoes$timing[contador] <= index){
@@ -148,7 +148,7 @@ simulador = function(data, k, alpha,
       res[i] = k * df$obseff.trips[i]^ alpha * exp(-M/2) * (
         N0 * exp(-M*i) -
           exp(-M/2) * catch_module(i,M) # catch
-        + recruit_module(i)# recrutamento
+        + recruit_module(i,M)# recrutamento
       )^beta
     }
   }

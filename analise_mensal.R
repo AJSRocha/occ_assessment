@@ -80,16 +80,16 @@ set.seed(123)
 #   theme_bw()
 # 
 # save(df_effort, file = 'data/df_effort_m_mbw_otb.Rdata')
-load('data/df_effort_m_mbw_otb.Rdata')
+load('.data/df_effort_m_mbw_otb.Rdata')
 
 # Funcoes catdyn
-source('funcoes_catdyn.R')
+source('.scripts/funcoes_catdyn.R')
 
 
 # Começando
 cat_df = as.CatDynData(x=df_effort %>% 
                          filter(as.numeric(
-                           as.character(year_sale)) %in% c(1999:2023)),
+                           as.character(year_sale)) %in% c(2010:2023)),
                        step="month",
                        fleet.name="Polyvalent-S",
                        coleff=4,
@@ -99,7 +99,7 @@ cat_df = as.CatDynData(x=df_effort %>%
                        unitscat="kg",
                        unitsmbw="kg",
                        nmult="thou",
-                       season.dates=c(as.Date("1999-01-01"),
+                       season.dates=c(as.Date("2010-01-01"),
                                       # as.Date("1995-12-24")))
                                       last_date_of_week(2023, 52)-1))
 
@@ -125,10 +125,11 @@ for(i in 1:nrow(detectados)){
 
 indice_manual = 
   list(
-    12,12,12,12,12,
-       12,10,10,11,12,
-       12,12,10,11,12,
-       11,12,10,12,11,
+    # 12,12,12,12,12,
+    #    12,10,10,11,12,
+    #    12,
+    12,10,11,12,
+    11,12,10,12,11,
        12,12,12,12,10)
 
 for(i in 0:(length(indice_manual)-1)){
@@ -139,7 +140,7 @@ unlist(indice_manual)
 
 cat_df$Data$`Polyvalent-S` %>% 
   mutate(year = ((time.step -1) %/% 12),
-         x2 = rep(1:12,25)) %>% 
+         x2 = rep(1:12,5)) %>% 
   ggplot() + 
   geom_line(aes(color = factor(year))) + 
   aes(y = spikecat,
@@ -150,24 +151,6 @@ cat_df$Data$`Polyvalent-S` %>%
   theme(legend.position = 'none')
 
 
-
-pars.ini = log(c(M,
-                 N0,
-                 unlist(P.ini), # estimativa de amplitude da perturbacao
-                 k,
-                 alpha,
-                 beta,
-                 unlist(disp)))
-
-pre_fit =
-catdynexp(x=cat_df,
-          p=25,
-          par=pars.ini,
-          dates=c(head(cat_df$Data[[1]]$time.step,1),
-                  unlist(indice_manual), #estimativa do timing da perturbacao
-                  tail(cat_df$Data[[1]]$time.step,1)),
-          distr='gamma')
-
 # View(pre_fit$Model$Results)
 plot(pre_fit$Model$Results$Predicted.Catch.kg ~ pre_fit$Model$Results$Observed.Catch.kg)
 abline(a=0, b=1)
@@ -177,57 +160,36 @@ abline(a=0, b=1)
 #' 'nlm', 'nlminb', 'spg', 'ucminf', 'newuoa',
 #'  'bobyqa', 'nmkb', 'hjkb', 'Rcgmin', or 'Rvmmin'.
 
-# fit_null = 
-#   trialer(cat_df,
-#           p = 25,
-#           M = 0.05976,
-#           N0.ini = 14020, #millions, as in nmult
-#           P = indice_manual,
-#           P.ini = list(rep(15000, 25)), #2 elementos porque sao 2 perturbacaoes
-#           k.ini = 0.0003546,
-#           alpha.ini = 1.1455,
-#           beta.ini  = 0.6134,
-#           distr = 'aplnormal',
-#           method = 'spg',
-#           itnmax = 10000,
-#           disp = list(1000))
 
+# recuando de 2019 a 2015: N0 = 30000
+#
 
 fit_null =
   trialer(cat_df,
-          p = 25,
-          M = 0.05976,
-          N0.ini = 30000, #millions, as in nmult
+          p = 14,
+          M = 0.01,
+          N0.ini = 60000, #millions, as in nmult
           P = indice_manual,
-          P.ini  = list(20000,20000,20000,40000,20000,
-                       20000,20000,20000,100000,20000,
-                       20000,20000,20000,50000,20000,
-                       20000,20000,20000,20000,20000,
-                       20000,20000,40000,20000,20000), #2 elementos porque sao 2 perturbacaoes
+          P.ini  = list(
+            # 20000,20000,20000,40000,20000,
+            #            20000,20000,20000,100000,20000,
+            #            20000,
+            20000, 20000, 50000,20000,       
+            20000, 20000, 20000, 20000, 20000,
+            20000, 20000,40000,20000,20000), #2 elementos porque sao 2 perturbacaoes
           k.ini = 0.00005,
-          alpha.ini = 0.9,
-          beta.ini  = 0.9,
+          alpha.ini = 0.85,
+          beta.ini  = 0.85,
           distr = 'aplnormal',
           method = 'CG',
           itnmax = 10000,
-          disp = list(5000))
+          disp = list(100))
 
 
-fit_null$Model$spg$AIC
+fit_null$fit$Model$CG$AIC
 
 
+plotador(cat_df, fit_null, pre = F,
+         post1 = T,
+         post2 = T)
 
-# 
-CatDynFit(x = cat_df,
-          p = p,
-          par = pars.ini,
-          dates = c(head(cat_df$Data[[1]]$time.step,1),
-                    unlist(indice_manual), #estimativa do timing da perturbacao
-                    tail(cat_df$Data[[1]]$time.step,1)),
-          distr = 'normal',
-          method = 'spg',
-          itnmax = 100)
-
-fit_null$Model$spg$AIC
-
-CatDynPred(fit_null,'')
