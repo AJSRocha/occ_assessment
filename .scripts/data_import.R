@@ -1,8 +1,8 @@
 library(dplyr)
 
 load('Z:/PNAB/portos_slv/portos_slv.Rdata')
-load("data/nautilus_occ.Rdata")
-load("data/naut_occ_2023.Rdata")
+load(".data/nautilus_occ.Rdata")
+load(".data/naut_occ_2023.Rdata")
 
 # actualiza dados de lota para tabela que inclui os de 2023
 bio_occ = occ_2023
@@ -128,7 +128,7 @@ lota_naut_1 =
 
 # lotas guardadas no nautilus em que dados foram registados com pesos
 
-load("data/index_metiers.Rdata")
+load(".data/index_metiers.Rdata")
 
 df_bio =
   bio_occ %>% 

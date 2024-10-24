@@ -3,30 +3,88 @@ library(CatDyn)
 library(ggplot2)
 library(Runuran)
 library(wesanderson)
+library(cuttlefish.model)
 set.seed(123)
 
-# Sintese das vendas
-# load("C:/repos/occ_assessment/data/initial_data_occ_sumario_otb.Rdata")
+# Funcoes catdyn
+source('.scripts/funcoes_catdyn.R')
 
-# Sintetiza o dataframe
+# Sintese das vendas
+# load("C:/repos/occ_assessment/.data/initial_data_occ_sumario_otb.Rdata")
+# 
+# # Sintetiza o dataframe e prepara para standardizacao 
 # df_effort =
 #   vd %>%
-#   # mutate(week = case_when(week == 53 ~ 52,
-#   #                         T ~ week)) %>%
-#   group_by(year_sale, month_sale, IEMBARCA) %>%
-#   summarise(catch_i = sum(QVENDA),
-#             effort_i = n_distinct(IDATVEND)) %>%
-#   # mutate(predicoes = pred) %>%
+#   group_by(year_sale, month_sale, IEMBARCA, PORTO) %>%
+#   summarise(Power.Main.raw = mean(Power.Main, na.rm = T),
+#             Power.main = trunc(Power.Main.raw/50) * 50,
+#             catch_i = sum(QVENDA[EGRUPART == 'MIS_MIS']),
+#             catch_i_otb = sum(QVENDA),
+#             effort_i = n_distinct(IDATVEND[EGRUPART == 'MIS_MIS']),
+#             effort_i_otb = n_distinct(IDATVEND))
+# 
+# std_otb = 
+# df_effort %>% 
+#   transmute(year = year_sale,
+#             fishing.season = year_sale,
+#             month = month_sale,
+#             rectangle = PORTO,
+#             power.class = Power.main,
+#             catch_i_otb = catch_i_otb,
+#             effort_i_otb = effort_i_otb,
+#             lpue = catch_i_otb/effort_i_otb)
+# 
+# std_mis = 
+#   df_effort %>% 
+#   transmute(year = year_sale,
+#             fishing.season = year_sale,
+#             month = month_sale,
+#             rectangle = PORTO,
+#             power.class = Power.main,
+#             catch_i = catch_i,
+#             effort_i = effort_i,
+#             lpue = catch_i/effort_i) %>% 
+#   mutate(lpue = case_when(is.nan(lpue) ~ 0,
+#                           T ~ lpue))
+# 
+# std_otb_temp = custom_delta_glm(std_otb)
+# std_mis_temp = custom_delta_glm(std_mis)
+# 
+# 
+# df_nominal = df_effort %>% 
+#   mutate(Power.main = as.character(Power.main)) %>%
+#   left_join(.,
+#             std_otb_temp$predicted.lpue,
+#             by = c('month_sale' = 'month',
+#                    'year_sale' = 'fishing.season',
+#                    'Power.main' = 'power.class',
+#                    'PORTO' = 'rectangle')) %>% 
+#   rename(st.lpue_otb = st.lpue) %>% 
+#   left_join(.,
+#             std_mis_temp$predicted.lpue,
+#             by = c('month_sale' = 'month',
+#                    'year_sale' = 'fishing.season',
+#                    'Power.main' = 'power.class',
+#                    'PORTO' = 'rectangle')) 
+# 
+# df_effort = df_effort %>% 
 #   group_by(year_sale, month_sale) %>%
 #   summarise(catch = sum(catch_i, na.rm =T),
-#             effort = sum(effort_i, na.rm =T))
+#             effort = sum(effort_i, na.rm =T),
+#             catch_otb = sum(catch_i_otb, na.rm = T),
+#             effort_otb = sum(effort_i_otb, na.rm =T))
+# 
+# 
+# save(std_mis_temp, 
+#      std_otb_temp,
+#      df_nominal,
+#      df_effort,
+#      file = '.data/df_effort_m_otb.Rdata')
 
-
-# save(df_effort, file = 'data/df_effort_m_otb.Rdata')
 # load('data/df_effort_m_otb.Rdata')
 
-# source('data_import.R')
-
+# source('.scripts/data_import.R')
+# 
 # lota_naut_2$month = case_when(lota_naut_2$MES %in% c('10', '11', '12') ~ lota_naut_2$MES,
 #                               T ~ paste0("0",lota_naut_2$MES))
 # 
@@ -78,28 +136,29 @@ set.seed(123)
 #             color = 'red') +
 #   facet_wrap(year_sale ~.) +
 #   theme_bw()
-# 
-# save(df_effort, file = 'data/df_effort_m_mbw_otb.Rdata')
+
+# save(df_effort, file = '.data/df_effort_m_mbw_otb.Rdata')
+# save(predicos, file = '.data/mbw_model.Rdata')
+load('.data/mbw_model.Rdata')
 load('.data/df_effort_m_mbw_otb.Rdata')
 
-# Funcoes catdyn
-source('.scripts/funcoes_catdyn.R')
 
 
-# Começando
+
+# Começando com frota completa (mis + otb)
 cat_df = as.CatDynData(x=df_effort %>% 
                          filter(as.numeric(
-                           as.character(year_sale)) %in% c(2010:2023)),
+                           as.character(year_sale)) %in% c(2009:2023)),
                        step="month",
-                       fleet.name="Polyvalent-S",
-                       coleff=4,
-                       colcat=3,
-                       colmbw=7,
+                       fleet.name="MIS+OTB-S",
+                       coleff=6,
+                       colcat=5,
+                       colmbw=9,
                        unitseff="trips",
                        unitscat="kg",
                        unitsmbw="kg",
                        nmult="thou",
-                       season.dates=c(as.Date("2010-01-01"),
+                       season.dates=c(as.Date("2009-01-01"),
                                       # as.Date("1995-12-24")))
                                       last_date_of_week(2023, 52)-1))
 
@@ -127,10 +186,9 @@ indice_manual =
   list(
     # 12,12,12,12,12,
     #    12,10,10,11,12,
-    #    12,
-    12,10,11,12,
+    12,12,10,11,12,
     11,12,10,12,11,
-       12,12,12,12,10)
+    12,12,12,12,10)
 
 for(i in 0:(length(indice_manual)-1)){
   indice_manual[[i+1]] = 12*i + indice_manual[[i+1]]
@@ -152,8 +210,8 @@ cat_df$Data$`Polyvalent-S` %>%
 
 
 # View(pre_fit$Model$Results)
-plot(pre_fit$Model$Results$Predicted.Catch.kg ~ pre_fit$Model$Results$Observed.Catch.kg)
-abline(a=0, b=1)
+# plot(pre_fit$Model$Results$Predicted.Catch.kg ~ pre_fit$Model$Results$Observed.Catch.kg)
+# abline(a=0, b=1)
 
 
 #'Nelder-Mead', 'BFGS', 'CG', 'L-BFGS-B',
@@ -166,15 +224,15 @@ abline(a=0, b=1)
 
 fit_null =
   trialer(cat_df,
-          p = 14,
+          p = 15,
           M = 0.01,
           N0.ini = 60000, #millions, as in nmult
           P = indice_manual,
           P.ini  = list(
             # 20000,20000,20000,40000,20000,
             #            20000,20000,20000,100000,20000,
-            #            20000,
-            20000, 20000, 50000,20000,       
+            #
+            20000, 20000, 20000, 50000,20000,       
             20000, 20000, 20000, 20000, 20000,
             20000, 20000,40000,20000,20000), #2 elementos porque sao 2 perturbacaoes
           k.ini = 0.00005,
@@ -193,3 +251,94 @@ plotador(cat_df, fit_null, pre = F,
          post1 = T,
          post2 = T)
 
+
+# Métricas para exportar
+
+# Biomassa anual
+annual_biomass =
+CatDynBSD(fit_null$fit,
+          method = 'CG',
+          multi = T,
+          mbw.sd = predicos$se.fit)
+
+annual_biomass %>% 
+  ggplot() + 
+  geom_line(aes(x = TimeStep,
+                y = B.ton,
+                group = 1),
+            size = 1) +
+  geom_line(aes(x = TimeStep,
+                y = B.ton + 2*B.ton.SE,
+                group = 1),
+            linetype = 2,
+            size = 1) +
+  geom_line(aes(x = TimeStep,
+                y = B.ton - 2*B.ton.SE,
+                group = 1),
+            linetype = 2,
+            size = 1) + 
+  theme_bw()
+
+# Fishing Mortality
+results = fit_null$pred$Model$Results
+
+natural_mortality = fit_null$fit$Model$CG$bt.par$M
+natural_mortality_sd = fit_null$fit$Model$CG$bt.stdev[['M']]
+
+results %>% 
+  ggplot() + 
+  geom_line(aes(x = Period.month,
+                y = `Observed.F.1/month`),
+            col = 'tomato',
+            size = 1) +
+  geom_line(aes(x = Period.month,
+                y = `Predicted.F.1/month`),
+            col = 'darkred',
+            size = 1,
+            linetype = 2) + 
+  geom_hline(yintercept = natural_mortality,
+            col = 'darkgreen',
+            size = 1,
+            linetype = 1) +
+  geom_hline(yintercept = natural_mortality + 2*natural_mortality_sd,
+             col = 'darkgreen',
+             size = 1,
+             linetype = 2) +
+  geom_hline(yintercept = natural_mortality - 2*natural_mortality_sd,
+             col = 'darkgreen',
+             size = 1,
+             linetype = 2) +
+  theme_bw()
+
+# Exploitation Rate
+
+results %>% 
+  ggplot() + 
+  geom_line(aes(x = Period.month,
+                y = `Observed.Explotrate`),
+            col = 'tomato',
+            size = 1) +
+  geom_line(aes(x = Period.month,
+                y = `Observed.Explotrate`*20),
+            col = 'blue',
+            size = 1) +
+  geom_line(aes(x = Period.month,
+                y = `Predicted.Explotrate`),
+            col = 'darkred',
+            size = 1,
+            linetype = 2) + 
+  geom_line(aes(x = Period.month,
+                y = `Observed.F.1/month`/(`Observed.F.1/month`+natural_mortality)),
+            col = 'purple',
+            size = 1) +
+  geom_hline(yintercept = 0.4,
+             col = 'darkgreen',
+             size = 1,
+             linetype = 1) +
+  theme_bw()
+
+
+results %>% 
+  summarise(pilas = `Observed.F.1/month`/(`Observed.F.1/month`+natural_mortality),
+            expo = Observed.Explotrate) %>% 
+  mutate(teste = pilas/expo)
