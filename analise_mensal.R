@@ -7,6 +7,7 @@ library(cuttlefish.model)
 set.seed(123)
 
 # Funcoes catdyn
+source('.scripts/custom_catdyn_fit.R')
 source('.scripts/funcoes_catdyn.R')
 
 # Sintese das vendas
@@ -81,7 +82,7 @@ source('.scripts/funcoes_catdyn.R')
 #      df_effort,
 #      file = '.data/df_effort_m_otb.Rdata')
 
-# load('data/df_effort_m_otb.Rdata')
+# load('.data/df_effort_m_otb.Rdata')
 
 # source('.scripts/data_import.R')
 # 
@@ -140,15 +141,15 @@ source('.scripts/funcoes_catdyn.R')
 # save(df_effort, file = '.data/df_effort_m_mbw_otb.Rdata')
 # save(predicos, file = '.data/mbw_model.Rdata')
 load('.data/mbw_model.Rdata')
+load('.data/df_effort_m_otb.Rdata')
 load('.data/df_effort_m_mbw_otb.Rdata')
-
 
 
 
 # Começando com frota completa (mis + otb)
 cat_df = as.CatDynData(x=df_effort %>% 
                          filter(as.numeric(
-                           as.character(year_sale)) %in% c(2009:2023)),
+                           as.character(year_sale)) %in% c(2006:2023)),
                        step="month",
                        fleet.name="MIS+OTB-S",
                        coleff=6,
@@ -158,7 +159,7 @@ cat_df = as.CatDynData(x=df_effort %>%
                        unitscat="kg",
                        unitsmbw="kg",
                        nmult="thou",
-                       season.dates=c(as.Date("2009-01-01"),
+                       season.dates=c(as.Date("2006-01-01"),
                                       # as.Date("1995-12-24")))
                                       last_date_of_week(2023, 52)-1))
 
@@ -185,7 +186,8 @@ for(i in 1:nrow(detectados)){
 indice_manual = 
   list(
     # 12,12,12,12,12,
-    #    12,10,10,11,12,
+    #    12,10,    
+    10,11,12,
     12,12,10,11,12,
     11,12,10,12,11,
     12,12,12,12,10)
@@ -196,15 +198,17 @@ for(i in 0:(length(indice_manual)-1)){
 
 unlist(indice_manual)
 
-cat_df$Data$`Polyvalent-S` %>% 
+cat_df$Data$`MIS+OTB-S` %>% 
   mutate(year = ((time.step -1) %/% 12),
-         x2 = rep(1:12,5)) %>% 
+         x2 = rep(1:12,length(year)/12)) %>% 
   ggplot() + 
-  geom_line(aes(color = factor(year))) + 
+  geom_line(aes(color = factor(year)),
+            size = 1) + 
   aes(y = spikecat,
       x = x2) + 
   facet_wrap(year ~.) + 
-  scale_color_manual(values = colorRampPalette(wes_palette('Zissou1'))(25)) + 
+  scale_color_manual(values = colorRampPalette(wes_palette('Zissou1'))(
+    length(cat_df$Data$`MIS+OTB-S`$time.step)/12)) + 
   theme_bw() + 
   theme(legend.position = 'none')
 
@@ -224,14 +228,14 @@ cat_df$Data$`Polyvalent-S` %>%
 
 fit_null =
   trialer(cat_df,
-          p = 15,
+          p = 18,
           M = 0.01,
           N0.ini = 60000, #millions, as in nmult
           P = indice_manual,
           P.ini  = list(
             # 20000,20000,20000,40000,20000,
-            #            20000,20000,20000,100000,20000,
-            #
+            #            20000,20000,
+            20000, 100000,20000,            #
             20000, 20000, 20000, 50000,20000,       
             20000, 20000, 20000, 20000, 20000,
             20000, 20000,40000,20000,20000), #2 elementos porque sao 2 perturbacaoes
@@ -253,6 +257,18 @@ plotador(cat_df, fit_null, pre = F,
 
 
 # Métricas para exportar
+
+# Inclui spict
+
+## Carrega spict aqui
+load('.data/spict.Rdata')
+
+spict_biom = exp(res_spict$value[names(res_spict$value) == 'logBBmsy']) *
+  exp(res_spict$value[names(res_spict$value) == 'logBmsy'])
+
+ggplot() + 
+  geom_point(aes(x = 1:300,
+                 y = spict_biom))
 
 # Biomassa anual
 annual_biomass =
@@ -342,3 +358,8 @@ results %>%
   summarise(pilas = `Observed.F.1/month`/(`Observed.F.1/month`+natural_mortality),
             expo = Observed.Explotrate) %>% 
   mutate(teste = pilas/expo)
+
+
+
+
+

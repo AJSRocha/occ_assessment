@@ -48,7 +48,7 @@ trialer = function(data, p, M, N0.ini, P.ini, k.ini,
                           dates=dates,
                           distr=distr)
   
-  res$fit = CatDynFit(x = data,
+  res$fit = CatDynFit_2(x = data,
                       p = p,
                       par = pars.ini,
                       dates = dates,

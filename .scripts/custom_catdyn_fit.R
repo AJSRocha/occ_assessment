@@ -1,0 +1,13158 @@
+CatDynFit_2 = 
+  function (x, p, par, dates, distr, method, control = list(), 
+            hessian = TRUE, itnmax, partial = TRUE) 
+  {
+    options(warn = -1)
+    fleet.name <- x$Properties$Fleets$Fleet
+    distr.set <- c("normal", "apnormal", "lognormal", "aplnormal", 
+                   "poisson", "gamma", "negbin", "roblognormal", "gumbel")
+    if (class(x) != "CatDynData") {
+      stop("Pass an object of class CatDynData as first argument - see the help for as.CatDynData")
+    }
+    if (x$Properties$Units["Time Step"] == "month" & sum(p) == 
+        0) {
+      stop("With monthly time step simple depletion models do not make sense. \n\n                                                                          It is recommended to use multi-annual depletion models with monthly time step for time series at least 15 years long\n                                                                          (which means that p should be 15 (one fleet) or c(15,15) (two fleets) at least)")
+    }
+    if (sum(sort(p) == p) < length(p)) {
+      stop("Number of perturbations per fleet must not be arranged in descending order")
+    }
+    if (any(is.na(p))) {
+      stop("NAs are not allowed in the perturbations per fleet vector 'p'")
+    }
+    if (length(p) < 1 || length(p) > 2) {
+      stop("The integer vector 'p' determines the number of perturbations per fleet; its length must be 1 for single fleet, or 2 for two fleets")
+    }
+    if (any(p < -25) || any(p > 25)) {
+      stop("The number of perturbations per fleet shall not be higher than 25 (use negative integers for transit models)")
+    }
+    if (class(p) != "numeric") {
+      stop("'p' must be a numeric vector")
+    }
+    if (any(is.na(par))) {
+      stop("NAs are not allowed in the parameter vector 'par'")
+    }
+    if (length(par) < 4 || length(par) > 60) {
+      stop("For any of the model versions the number of parameters is > 4 and < 61")
+    }
+    if (class(par) != "numeric") {
+      stop("'par' must be a numeric vector")
+    }
+    if (any(is.na(dates))) {
+      stop("NAs are not allowed in the dates vector")
+    }
+    if (dates[1] > dates[2]) {
+      stop("Initial date must be less than next date")
+    }
+    if (tail(dates, 1) < tail(dates, 2)[1]) {
+      stop("Final date must not be less than previous date")
+    }
+    if (!distr %in% distr.set) {
+      stop("'distr' must be 'normal','apnormal','lognormal','aplnormal', 'gamma', 'poisson', 'negbin', 'roblognormal' or 'gumbel' for 1-fleet models, or any of the 81 pairwise combination of these for 2-fleets models")
+    }
+    if (length(fleet.name) == 1) {
+      if (length(p) != 1) {
+        stop("For a 1-fleet model 'p' must be of length 1")
+      }
+      if (p > 25 | p < -25) {
+        stop("Parameter p -number of perturbations- does not correspond with any of the allowed integers for one fleet, -25<=p<=25")
+      }
+      if (p < 0 & length(dates) != (2 * abs(p) + 2)) {
+        stop("The dates vector must contain initial time step, time step of entry of each perturbation immediately followed by time step of its exit, for all perturbations ordered by time of entry, and final time step")
+      }
+      if (p == 0) {
+        if (length(dates) != 2) {
+          stop("For a 1-fleet 0P (pure depletion) model 'dates' must be a vector of length 2")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 5) {
+            stop("For a 1-fleet 0 perturbation (simple depletion model) fit with poisson or adjusted profile likelihood par must be a vector of length 5")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 6) {
+            stop("For a 1-fleet 0 perturbation (simple depletion model) fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 6")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.end")
+          results2[[i]]$Distr <- distr
+          par.names <- c("M", "N0", paste(c("k.", "alpha.", 
+                                            "beta."), fleet.name, sep = ""))
+          if (distr == "negbin" | distr == "normal" | 
+              distr == "lognormal" | distr == "gamma" | 
+              distr == "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- NA
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5)), mean = as.numeric(results1[i, 
+                                                                                                  1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                  ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 1) {
+        if (length(dates) != 3) {
+          stop("For a 1-fleet 1P model 'dates' must be a vector of length 3")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 6) {
+            stop("For a 1-fleet 1 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 6")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 7) {
+            stop("For a 1-fleet 1 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 7")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.end")
+          results2[[i]]$Distr <- distr
+          par.names <- c("M", "N0", paste(c("P1.", "k.", 
+                                            "alpha.", "beta."), sort(rep(fleet.name, 3 + 
+                                                                           p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7)), mean = as.numeric(results1[i, 
+                                                                              1:length(par)]), cov = try(solve(temp[i, 
+                                                                              ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 2) {
+        if (length(dates) != 4) {
+          stop("For a 1-fleet 2P model 'dates' must be a vector of length 4")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 7) {
+            stop("For a 1-fleet 2 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 7")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 8) {
+            stop("For a 1-fleet 2 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 8")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                               3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7)), mean = as.numeric(results1[i, 
+                                                                              1:length(par)]), cov = try(solve(temp[i, 
+                                                                              ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8)), mean = as.numeric(results1[i, 
+                                                                                        1:length(par)]), cov = try(solve(temp[i, 
+                                                                                        ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 3) {
+        if (length(dates) != 5) {
+          stop("For a 1-fleet 3P model 'dates' must be a vector of length 5")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 8) {
+            stop("For a 1-fleet 3 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 8")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 9) {
+            stop("For a 1-fleet 3 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 9")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                      3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8)), mean = as.numeric(results1[i, 
+                                                                                        1:length(par)]), cov = try(solve(temp[i, 
+                                                                                        ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9)), mean = as.numeric(results1[i, 
+                                                                                                  1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                  ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 4) {
+        if (length(dates) != 6) {
+          stop("For a 1-fleet 4P model 'dates' must be a vector of length 6")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 9) {
+            stop("For a 1-fleet 4 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 9")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 10) {
+            stop("For a 1-fleet 4 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 10")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                             3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9)), mean = as.numeric(results1[i, 
+                                                                                                  1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                  ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 5) {
+        if (length(dates) != 7) {
+          stop("For a 1-fleet 5P model 'dates' must be a vector of length 7")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 10) {
+            stop("For a 1-fleet 5 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 10")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 11) {
+            stop("For a 1-fleet 5 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 11")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "k.", "alpha.", "beta."), 
+                                          sort(rep(fleet.name, 3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 6) {
+        if (length(dates) != 8) {
+          stop("For a 1-fleet 6P model 'dates' must be a vector of length 8")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 11) {
+            stop("For a 1-fleet 6 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 11")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 12) {
+            stop("For a 1-fleet 6 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 12")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "k.", "alpha.", 
+                                            "beta."), sort(rep(fleet.name, 3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 7) {
+        if (length(dates) != 9) {
+          stop("For a 1-fleet 7P model 'dates' must be a vector of length 9")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 12) {
+            stop("For a 1-fleet 7 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 12")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 13) {
+            stop("For a 1-fleet 7 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 13")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "k.", "alpha.", 
+                                            "beta."), sort(rep(fleet.name, 3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 8) {
+        if (length(dates) != 10) {
+          stop("For a 1-fleet 8P model 'dates' must be a vector of length 10")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 13) {
+            stop("For a 1-fleet 8 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 13")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 14) {
+            stop("For a 1-fleet 8 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 14")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                               3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 9) {
+        if (length(dates) != 11) {
+          stop("For a 1-fleet 9P model 'dates' must be a vector of length 11")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 14) {
+            stop("For a 1-fleet 9 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 14")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 15) {
+            stop("For a 1-fleet 9 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 15")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.P9", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "P9.", "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                      3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 10) {
+        if (length(dates) != 12) {
+          stop("For a 1-fleet 10P model 'dates' must be a vector of length 12")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 15) {
+            stop("For a 1-fleet 10 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 15")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 16) {
+            stop("For a 1-fleet 10 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 16")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.P9", "ts.P10", 
+                                          "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "P9.", "P10.", "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                              3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 11) {
+        if (length(dates) != 13) {
+          stop("For a 1-fleet 11P model 'dates' must be a vector of length 13")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 16) {
+            stop("For a 1-fleet 11 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 16")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 17) {
+            stop("For a 1-fleet 11 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 17")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.P9", "ts.P10", 
+                                          "ts.P11", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "P9.", "P10.", "P11.", "k.", "alpha.", "beta."), 
+                                          sort(rep(fleet.name, 3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 12) {
+        if (length(dates) != 14) {
+          stop("For a 1-fleet 12P model 'dates' must be a vector of length 14")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 17) {
+            stop("For a 1-fleet 12 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 17")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 18) {
+            stop("For a 1-fleet 12 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 18")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.P9", "ts.P10", 
+                                          "ts.P11", "ts.P12", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "P9.", "P10.", "P11.", "P12.", "k.", "alpha.", 
+                                            "beta."), sort(rep(fleet.name, 3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 13) {
+        if (length(dates) != 15) {
+          stop("For a 1-fleet 13P model 'dates' must be a vector of length 15")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 18) {
+            stop("For a 1-fleet 13 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 18")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 19) {
+            stop("For a 1-fleet 13 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par mustbe a vector of length 19")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.P9", "ts.P10", 
+                                          "ts.P11", "ts.P12", "ts.P13", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "P9.", "P10.", "P11.", "P12.", "P13.", "k.", 
+                                            "alpha.", "beta."), sort(rep(fleet.name, 3 + 
+                                                                           p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 14) {
+        if (length(dates) != 16) {
+          stop("For a 1-fleet 14P model 'dates' must be a vector of length 16")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 19) {
+            stop("For a 1-fleet 14 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 19")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 20) {
+            stop("For a 1-fleet 14 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par mustbe a vector of length 20")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.P9", "ts.P10", 
+                                          "ts.P11", "ts.P12", "ts.P13", "ts.P14", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                            "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                               3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 15) {
+        if (length(dates) != 17) {
+          stop("For a 1-fleet 15P model 'dates' must be a vector of length 17")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 20) {
+            stop("For a 1-fleet 15 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 20")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 21) {
+            stop("For a 1-fleet 15 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par mustbe a vector of length 21")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.P9", "ts.P10", 
+                                          "ts.P11", "ts.P12", "ts.P13", "ts.P14", "ts.P15", 
+                                          "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                            "P15.", "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                       3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 16) {
+        if (length(dates) != 18) {
+          stop("For a 1-fleet 16P model 'dates' must be a vector of length 18")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 21) {
+            stop("For a 1-fleet 16 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 21")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 22) {
+            stop("For a 1-fleet 16 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par mustbe a vector of length 22")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.P9", "ts.P10", 
+                                          "ts.P11", "ts.P12", "ts.P13", "ts.P14", "ts.P15", 
+                                          "ts.P16", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                            "P15.", "P16.", "k.", "alpha.", "beta."), 
+                                          sort(rep(fleet.name, 3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 17) {
+        if (length(dates) != 19) {
+          stop("For a 1-fleet 17P model 'dates' must be a vector of length 19")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 22) {
+            stop("For a 1-fleet 17 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 22")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 23) {
+            stop("For a 1-fleet 17 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par mustbe a vector of length 23")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.P9", "ts.P10", 
+                                          "ts.P11", "ts.P12", "ts.P13", "ts.P14", "ts.P15", 
+                                          "ts.P16", "ts.P17", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                            "P15.", "P16.", "P17.", "k.", "alpha.", "beta."), 
+                                          sort(rep(fleet.name, 3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 18) {
+        if (length(dates) != 20) {
+          stop("For a 1-fleet 18P model 'dates' must be a vector of length 20")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 23) {
+            stop("For a 1-fleet 18 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 23")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 24) {
+            stop("For a 1-fleet 18 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par mustbe a vector of length 24")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.P9", "ts.P10", 
+                                          "ts.P11", "ts.P12", "ts.P13", "ts.P14", "ts.P15", 
+                                          "ts.P16", "ts.P17", "ts.P18", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                            "P15.", "P16.", "P17.", "P18.", "k.", "alpha.", 
+                                            "beta."), sort(rep(fleet.name, 3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 19) {
+        if (length(dates) != 21) {
+          stop("For a 1-fleet 19P model 'dates' must be a vector of length 21")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 24) {
+            stop("For a 1-fleet 19 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 24")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 25) {
+            stop("For a 1-fleet 19 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par mustbe a vector of length 25")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.P9", "ts.P10", 
+                                          "ts.P11", "ts.P12", "ts.P13", "ts.P14", "ts.P15", 
+                                          "ts.P16", "ts.P17", "ts.P18", "ts.P19", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                            "P15.", "P16.", "P17.", "P18.", "P19.", "k.", 
+                                            "alpha.", "beta."), sort(rep(fleet.name, 3 + 
+                                                                           p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 20) {
+        if (length(dates) != 22) {
+          stop("For a 1-fleet 20P model 'dates' must be a vector of length 22")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 25) {
+            stop("For a 1-fleet 20 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 25")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 26) {
+            stop("For a 1-fleet 20 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par mustbe a vector of length 26")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.P9", "ts.P10", 
+                                          "ts.P11", "ts.P12", "ts.P13", "ts.P14", "ts.P15", 
+                                          "ts.P16", "ts.P17", "ts.P18", "ts.P19", "ts.P20", 
+                                          "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                            "P15.", "P16.", "P17.", "P18.", "P19.", "P20.", 
+                                            "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                               3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 21) {
+        if (length(dates) != 23) {
+          stop("For a 1-fleet 21P model 'dates' must be a vector of length 23")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 26) {
+            stop("For a 1-fleet 21 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 26")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 27) {
+            stop("For a 1-fleet 21 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par mustbe a vector of length 27")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.P9", "ts.P10", 
+                                          "ts.P11", "ts.P12", "ts.P13", "ts.P14", "ts.P15", 
+                                          "ts.P16", "ts.P17", "ts.P18", "ts.P19", "ts.P20", 
+                                          "ts.P21", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                            "P15.", "P16.", "P17.", "P18.", "P19.", "P20.", 
+                                            "P21.", "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                       3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 22) {
+        if (length(dates) != 24) {
+          stop("For a 1-fleet 22P model 'dates' must be a vector of length 24")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 27) {
+            stop("For a 1-fleet 22 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 27")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 28) {
+            stop("For a 1-fleet 22 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par mustbe a vector of length 28")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.P9", "ts.P10", 
+                                          "ts.P11", "ts.P12", "ts.P13", "ts.P14", "ts.P15", 
+                                          "ts.P16", "ts.P17", "ts.P18", "ts.P19", "ts.P20", 
+                                          "ts.P21", "ts.P22", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                            "P15.", "P16.", "P17.", "P18.", "P19.", "P20.", 
+                                            "P21.", "P22.", "k.", "alpha.", "beta."), 
+                                          sort(rep(fleet.name, 3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 23) {
+        if (length(dates) != 25) {
+          stop("For a 1-fleet 23P model 'dates' must be a vector of length 25")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 28) {
+            stop("For a 1-fleet 23 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 28")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 29) {
+            stop("For a 1-fleet 23 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par mustbe a vector of length 29")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.P9", "ts.P10", 
+                                          "ts.P11", "ts.P12", "ts.P13", "ts.P14", "ts.P15", 
+                                          "ts.P16", "ts.P17", "ts.P18", "ts.P19", "ts.P20", 
+                                          "ts.P21", "ts.P22", "ts.P23", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                            "P15.", "P16.", "P17.", "P18.", "P19.", "P20.", 
+                                            "P21.", "P22.", "P23.", "k.", "alpha.", "beta."), 
+                                          sort(rep(fleet.name, 3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 24) {
+        if (length(dates) != 26) {
+          stop("For a 1-fleet 24P model 'dates' must be a vector of length 26")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 29) {
+            stop("For a 1-fleet 24 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 29")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 30) {
+            stop("For a 1-fleet 24 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par mustbe a vector of length 30")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.P9", "ts.P10", 
+                                          "ts.P11", "ts.P12", "ts.P13", "ts.P14", "ts.P15", 
+                                          "ts.P16", "ts.P17", "ts.P18", "ts.P19", "ts.P20", 
+                                          "ts.P21", "ts.P22", "ts.P23", "ts.P24", "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                            "P15.", "P16.", "P17.", "P18.", "P19.", "P20.", 
+                                            "P21.", "P22.", "P23.", "P24.", "k.", "alpha.", 
+                                            "beta."), sort(rep(fleet.name, 3 + p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == 25) {
+        if (length(dates) != 27) {
+          stop("For a 1-fleet 25P model 'dates' must be a vector of length 27")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (length(par) != 30) {
+            stop("For a 1-fleet 25 perturbation fit with poisson or adjusted profile likelihood par must be a vector of length 30")
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (length(par) != 31) {
+            stop("For a 1-fleet 25 perturbation fit with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par mustbe a vector of length 31")
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1", "ts.P2", "ts.P3", "ts.P4", "ts.P5", 
+                                          "ts.P6", "ts.P7", "ts.P8", "ts.P9", "ts.P10", 
+                                          "ts.P11", "ts.P12", "ts.P13", "ts.P14", "ts.P15", 
+                                          "ts.P16", "ts.P17", "ts.P18", "ts.P19", "ts.P20", 
+                                          "ts.P21", "ts.P22", "ts.P23", "ts.P24", "ts.P25", 
+                                          "ts.end")
+          par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                            "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                            "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                            "P15.", "P16.", "P17.", "P18.", "P19.", "P20.", 
+                                            "P21.", "P22.", "P23.", "P24.", "P25.", "k.", 
+                                            "alpha.", "beta."), sort(rep(fleet.name, 3 + 
+                                                                           p)), sep = ""))
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -1) {
+        if (length(dates) != 4) {
+          stop("For a 1-fleet 1P transit model 'dates' must be a vector of length 4")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 7) {
+              stop("For a 1-fleet 1 perturbation transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 7")
+            }
+          }
+          else {
+            if (length(par) != 6) {
+              stop("For a 1-fleet 1 perturbation transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 6")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 8) {
+              stop("For a 1-fleet 1 perturbation transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 8")
+            }
+          }
+          else {
+            if (length(par) != 7) {
+              stop("For a 1-fleet 1 perturbation transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 7")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                 3 + abs(p))), sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "k.", 
+                                              "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                           3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7)), mean = as.numeric(results1[i, 
+                                                                                1:length(par)]), cov = try(solve(temp[i, 
+                                                                                ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7)), mean = as.numeric(results1[i, 
+                                                                                1:length(par)]), cov = try(solve(temp[i, 
+                                                                                ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -2) {
+        if (length(dates) != 6) {
+          stop("For a 1-fleet 2P transit model 'dates' must be a vector of length 6")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 9) {
+              stop("For a 1-fleet 2 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 9")
+            }
+          }
+          else {
+            if (length(par) != 7) {
+              stop("For a 1-fleet 2 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 7")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 10) {
+              stop("For a 1-fleet 2 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 10")
+            }
+          }
+          else {
+            if (length(par) != 8) {
+              stop("For a 1-fleet 2 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 8")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "k.", "alpha.", "beta."), 
+                                            sort(rep(fleet.name, 3 + abs(p))), sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                 3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x8)), mean = as.numeric(results1[i, 
+                                                                                                    1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                    ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7)), mean = as.numeric(results1[i, 
+                                                                                1:length(par)]), cov = try(solve(temp[i, 
+                                                                                ]$nhatend)), ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -3) {
+        if (length(dates) != 8) {
+          stop("For a 1-fleet 3P transit model 'dates' must be a vector of length 8")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 11) {
+              stop("For a 1-fleet 3 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 11")
+            }
+          }
+          else {
+            if (length(par) != 8) {
+              stop("For a 1-fleet 3 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 8")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 12) {
+              stop("For a 1-fleet 3 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 12")
+            }
+          }
+          else {
+            if (length(par) != 9) {
+              stop("For a 1-fleet 3 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 9")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "k.", "alpha.", 
+                                              "beta."), sort(rep(fleet.name, 3 + abs(p))), 
+                                            sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                        3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9)), mean = as.numeric(results1[i, 
+                                                                                                    1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                    ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -4) {
+        if (length(dates) != 10) {
+          stop("For a 1-fleet 4P transit model 'dates' must be a vector of length 10")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 13) {
+              stop("For a 1-fleet 4 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 13")
+            }
+          }
+          else {
+            if (length(par) != 9) {
+              stop("For a 1-fleet 4 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 9")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 14) {
+              stop("For a 1-fleet 4 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 14")
+            }
+          }
+          else {
+            if (length(par) != 10) {
+              stop("For a 1-fleet 4 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 10")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                 3 + abs(p))), sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "k.", "alpha.", "beta."), 
+                                            sort(rep(fleet.name, 3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9)), mean = as.numeric(results1[i, 
+                                                                                                    1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                    ]$nhatend)), ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -5) {
+        if (length(dates) != 12) {
+          stop("For a 1-fleet 5P transit model 'dates' must be a vector of length 12")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 15) {
+              stop("For a 1-fleet 5 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 15")
+            }
+          }
+          else {
+            if (length(par) != 10) {
+              stop("For a 1-fleet 5 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 10")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 16) {
+              stop("For a 1-fleet 5 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 16")
+            }
+          }
+          else {
+            if (length(par) != 11) {
+              stop("For a 1-fleet 5 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 11")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2,", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5,", "k.", "alpha.", "beta."), 
+                                            sort(rep(fleet.name, 3 + abs(p))), sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "k.", "alpha.", "beta."), 
+                                            sort(rep(fleet.name, 3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -6) {
+        if (length(dates) != 14) {
+          stop("For a 1-fleet 6P transit model 'dates' must be a vector of length 14")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 17) {
+              stop("For a 1-fleet 6 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 17")
+            }
+          }
+          else {
+            if (length(par) != 11) {
+              stop("For a 1-fleet 6 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 11")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 18) {
+              stop("For a 1-fleet 6 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 18")
+            }
+          }
+          else {
+            if (length(par) != 12) {
+              stop("For a 1-fleet 6 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 12")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3,", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "k.", "alpha.", 
+                                              "beta."), sort(rep(fleet.name, 3 + abs(p))), 
+                                            sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "k.", "alpha.", 
+                                              "beta."), sort(rep(fleet.name, 3 + abs(p))), 
+                                            sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -7) {
+        if (length(dates) != 16) {
+          stop("For a 1-fleet 7P transit model 'dates' must be a vector of length 16")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 19) {
+              stop("For a 1-fleet 7 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 19")
+            }
+          }
+          else {
+            if (length(par) != 12) {
+              stop("For a 1-fleet 7 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 12")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 20) {
+              stop("For a 1-fleet 7 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 20")
+            }
+          }
+          else {
+            if (length(par) != 13) {
+              stop("For a 1-fleet 7 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 13")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                 3 + abs(p))), sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "k.", 
+                                              "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                           3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            else {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -8) {
+        if (length(dates) != 18) {
+          stop("For a 1-fleet 8P transit model 'dates' must be a vector of length 18")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 21) {
+              stop("For a 1-fleet 8 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 21")
+            }
+          }
+          else {
+            if (length(par) != 13) {
+              stop("For a 1-fleet 8 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 13")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 22) {
+              stop("For a 1-fleet 8 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 22")
+            }
+          }
+          else {
+            if (length(par) != 14) {
+              stop("For a 1-fleet 8 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 14")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "k.", "alpha.", "beta."), 
+                                            sort(rep(fleet.name, 3 + abs(p))), sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                 3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14) ~ 
+                                            exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -9) {
+        if (length(dates) != 20) {
+          stop("For a 1-fleet 9P transit model 'dates' must be a vector of length 20")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 23) {
+              stop("For a 1-fleet 9 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 23")
+            }
+          }
+          else {
+            if (length(par) != 14) {
+              stop("For a 1-fleet 9 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 14")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 24) {
+              stop("For a 1-fleet 9 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 24")
+            }
+          }
+          else {
+            if (length(par) != 15) {
+              stop("For a 1-fleet 9 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 15")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.P9.entry", "ts.Q9.exit", 
+                                            "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "P9.", "Q9.", "k.", "alpha.", 
+                                              "beta."), sort(rep(fleet.name, 3 + abs(p))), 
+                                            sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.P9.entry", "ts.P9.exit", 
+                                            "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                        3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -10) {
+        if (length(dates) != 22) {
+          stop("For a 1-fleet 10P transit model 'dates' must be a vector of length 22")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 25) {
+              stop("For a 1-fleet 10 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 25")
+            }
+          }
+          else {
+            if (length(par) != 15) {
+              stop("For a 1-fleet 10 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 15")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 26) {
+              stop("For a 1-fleet 10 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 26")
+            }
+          }
+          else {
+            if (length(par) != 16) {
+              stop("For a 1-fleet 10 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 16")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.P9.entry", "ts.Q9.exit", 
+                                            "ts.P10.entry", "ts.Q10.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "P9.", "Q9.", "P10.", "Q10.", 
+                                              "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                 3 + abs(p))), sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.P9.entry", "ts.P9.exit", 
+                                            "ts.P10.entry", "ts.P10.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "k.", "alpha.", "beta."), 
+                                            sort(rep(fleet.name, 3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -11) {
+        if (length(dates) != 24) {
+          stop("For a 1-fleet 11P transit model 'dates' must be a vector of length 24")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 27) {
+              stop("For a 1-fleet 11 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 27")
+            }
+          }
+          else {
+            if (length(par) != 16) {
+              stop("For a 1-fleet 11 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 16")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 28) {
+              stop("For a 1-fleet 11 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 28")
+            }
+          }
+          else {
+            if (length(par) != 17) {
+              stop("For a 1-fleet 11 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 17")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.P9.entry", "ts.Q9.exit", 
+                                            "ts.P10.entry", "ts.Q10.exit", "ts.P11.entry", 
+                                            "ts.Q11.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "P9.", "Q9.", "P10.", "Q10.", 
+                                              "P11.", "Q11.", "k.", "alpha.", "beta."), 
+                                            sort(rep(fleet.name, 3 + abs(p))), sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.P9.entry", "ts.P9.exit", 
+                                            "ts.P10.entry", "ts.P10.exit", "ts.P11.entry", 
+                                            "ts.P11.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "k.", "alpha.", "beta."), 
+                                            sort(rep(fleet.name, 3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -12) {
+        if (length(dates) != 26) {
+          stop("For a 1-fleet 12P transit model 'dates' must be a vector of length 26")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 29) {
+              stop("For a 1-fleet 12 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 29")
+            }
+          }
+          else {
+            if (length(par) != 17) {
+              stop("For a 1-fleet 12 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 17")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 30) {
+              stop("For a 1-fleet 12 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 30")
+            }
+          }
+          else {
+            if (length(par) != 18) {
+              stop("For a 1-fleet 12 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 18")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.P9.entry", "ts.Q9.exit", 
+                                            "ts.P10.entry", "ts.Q10.exit", "ts.P11.entry", 
+                                            "ts.Q11.exit", "ts.P12.entry", "ts.Q12.exit", 
+                                            "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "P9.", "Q9.", "P10.", "Q10.", 
+                                              "P11.", "Q11.", "P12.", "Q12.", "k.", "alpha.", 
+                                              "beta."), sort(rep(fleet.name, 3 + abs(p))), 
+                                            sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.P9.entry", "ts.P9.exit", 
+                                            "ts.P10.entry", "ts.P10.exit", "ts.P11.entry", 
+                                            "ts.P11.exit", "ts.P12.entry", "ts.P12.exit", 
+                                            "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "k.", "alpha.", 
+                                              "beta."), sort(rep(fleet.name, 3 + abs(p))), 
+                                            sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -13) {
+        if (length(dates) != 28) {
+          stop("For a 1-fleet 13P transit model 'dates' must be a vector of length 28")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 31) {
+              stop("For a 1-fleet 13 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 31")
+            }
+          }
+          else {
+            if (length(par) != 18) {
+              stop("For a 1-fleet 13 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 18")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 32) {
+              stop("For a 1-fleet 13 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 32")
+            }
+          }
+          else {
+            if (length(par) != 19) {
+              stop("For a 1-fleet 13 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 19")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.P9.entry", "ts.Q9.exit", 
+                                            "ts.P10.entry", "ts.Q10.exit", "ts.P11.entry", 
+                                            "ts.Q11.exit", "ts.P12.entry", "ts.Q12.exit", 
+                                            "ts.P13.entry", "ts.Q13.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "P9.", "Q9.", "P10.", "Q10.", 
+                                              "P11.", "Q11.", "P12.", "Q12.", "P13.", 
+                                              "Q13.", "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                         3 + abs(p))), sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.P9.entry", "ts.P9.exit", 
+                                            "ts.P10.entry", "ts.P10.exit", "ts.P11.entry", 
+                                            "ts.P11.exit", "ts.P12.entry", "ts.P12.exit", 
+                                            "ts.P13.entry", "ts.P13.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "k.", 
+                                              "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                           3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -14) {
+        if (length(dates) != 30) {
+          stop("For a 1-fleet 14P transit model 'dates' must be a vector of length 30")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 33) {
+              stop("For a 1-fleet 14 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 33")
+            }
+          }
+          else {
+            if (length(par) != 19) {
+              stop("For a 1-fleet 14 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 19")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 34) {
+              stop("For a 1-fleet 14 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 34")
+            }
+          }
+          else {
+            if (length(par) != 20) {
+              stop("For a 1-fleet 14 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 20")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.P9.entry", "ts.Q9.exit", 
+                                            "ts.P10.entry", "ts.Q10.exit", "ts.P11.entry", 
+                                            "ts.Q11.exit", "ts.P12.entry", "ts.Q12.exit", 
+                                            "ts.P13.entry", "ts.Q13.exit", "ts.P14.entry", 
+                                            "ts.Q14.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "P9.", "Q9.", "P10.", "Q10.", 
+                                              "P11.", "Q11.", "P12.", "Q12.", "P13.", 
+                                              "Q13.", "P14.", "Q14.", "k.", "alpha.", 
+                                              "beta."), sort(rep(fleet.name, 3 + abs(p))), 
+                                            sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.P9.entry", "ts.P9.exit", 
+                                            "ts.P10.entry", "ts.P10.exit", "ts.P11.entry", 
+                                            "ts.P11.exit", "ts.P12.entry", "ts.P12.exit", 
+                                            "ts.P13.entry", "ts.P13.exit", "ts.P14.entry", 
+                                            "ts.P14.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                 3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -15) {
+        if (length(dates) != 32) {
+          stop("For a 1-fleet 15P transit model 'dates' must be a vector of length 17")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 35) {
+              stop("For a 1-fleet 15 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 35")
+            }
+          }
+          else {
+            if (length(par) != 20) {
+              stop("For a 1-fleet 15 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 20")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 36) {
+              stop("For a 1-fleet 15 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 36")
+            }
+          }
+          else {
+            if (length(par) != 21) {
+              stop("For a 1-fleet 15 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 21")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.P9.entry", "ts.Q9.exit", 
+                                            "ts.P10.entry", "ts.Q10.exit", "ts.P11.entry", 
+                                            "ts.Q11.exit", "ts.P12.entry", "ts.Q12.exit", 
+                                            "ts.P13.entry", "ts.Q13.exit", "ts.P14.entry", 
+                                            "ts.Q14.exit", "ts.P15.entry", "ts.Q15.exit", 
+                                            "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "P9.", "Q9.", "P10.", "Q10.", 
+                                              "P11.", "Q11.", "P12.", "Q12.", "P13.", 
+                                              "Q13.", "P14.", "Q14.", "P15.", "Q15.", 
+                                              "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                 3 + abs(p))), sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.P9.entry", "ts.P9.exit", 
+                                            "ts.P10.entry", "ts.P10.exit", "ts.P11.entry", 
+                                            "ts.P11.exit", "ts.P12.entry", "ts.P12.exit", 
+                                            "ts.P13.entry", "ts.P13.exit", "ts.P14.entry", 
+                                            "ts.P14.exit", "ts.P15.entry", "ts.P15.exit", 
+                                            "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                         3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -16) {
+        if (length(dates) != 34) {
+          stop("For a 1-fleet 16P transit model 'dates' must be a vector of length 34")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 37) {
+              stop("For a 1-fleet 16 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 37")
+            }
+          }
+          else {
+            if (length(par) != 21) {
+              stop("For a 1-fleet 16 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 21")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 38) {
+              stop("For a 1-fleet 16 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 38")
+            }
+          }
+          else {
+            if (length(par) != 22) {
+              stop("For a 1-fleet 16 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 22")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.P9.entry", "ts.Q9.exit", 
+                                            "ts.P10.entry", "ts.Q10.exit", "ts.P11.entry", 
+                                            "ts.Q11.exit", "ts.P12.entry", "ts.Q12.exit", 
+                                            "ts.P13.entry", "ts.Q13.exit", "ts.P14.entry", 
+                                            "ts.Q14.exit", "ts.P15.entry", "ts.Q15.exit", 
+                                            "ts.P16.entry", "ts.Q16.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "P9.", "Q9.", "P10.", "Q10.", 
+                                              "P11.", "Q11.", "P12.", "Q12.", "P13.", 
+                                              "Q13.", "P14.", "Q14.", "P15.", "Q15.", 
+                                              "P16.", "Q16.", "k.", "alpha.", "beta."), 
+                                            sort(rep(fleet.name, 3 + abs(p))), sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.P9.entry", "ts.P9.exit", 
+                                            "ts.P10.entry", "ts.P10.exit", "ts.P11.entry", 
+                                            "ts.P11.exit", "ts.P12.entry", "ts.P12.exit", 
+                                            "ts.P13.entry", "ts.P13.exit", "ts.P14.entry", 
+                                            "ts.P14.exit", "ts.P15.entry", "ts.P15.exit", 
+                                            "ts.P16.entry", "ts.P16.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "k.", "alpha.", "beta."), 
+                                            sort(rep(fleet.name, 3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -17) {
+        if (length(dates) != 36) {
+          stop("For a 1-fleet 17P transit model 'dates' must be a vector of length 36")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 39) {
+              stop("For a 1-fleet 17 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 39")
+            }
+          }
+          else {
+            if (length(par) != 22) {
+              stop("For a 1-fleet 17 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 22")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 40) {
+              stop("For a 1-fleet 17 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 40")
+            }
+          }
+          else {
+            if (length(par) != 23) {
+              stop("For a 1-fleet 17 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 23")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.P9.entry", "ts.Q9.exit", 
+                                            "ts.P10.entry", "ts.Q10.exit", "ts.P11.entry", 
+                                            "ts.Q11.exit", "ts.P12.entry", "ts.Q12.exit", 
+                                            "ts.P13.entry", "ts.Q13.exit", "ts.P14.entry", 
+                                            "ts.Q14.exit", "ts.P15.entry", "ts.Q15.exit", 
+                                            "ts.P16.entry", "ts.Q16.exit", "ts.P17.entry", 
+                                            "ts.Q17.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "P9.", "Q9.", "P10.", "Q10.", 
+                                              "P11.", "Q11.", "P12.", "Q12.", "P13.", 
+                                              "Q13.", "P14.", "Q14.", "P15.", "Q15.", 
+                                              "P16.", "Q16.", "P17.", "Q17.", "k.", "alpha.", 
+                                              "beta."), sort(rep(fleet.name, 3 + abs(p))), 
+                                            sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.P9.entry", "ts.P9.exit", 
+                                            "ts.P10.entry", "ts.P10.exit", "ts.P11.entry", 
+                                            "ts.P11.exit", "ts.P12.entry", "ts.P12.exit", 
+                                            "ts.P13.entry", "ts.P13.exit", "ts.P14.entry", 
+                                            "ts.P14.exit", "ts.P15.entry", "ts.P15.exit", 
+                                            "ts.P16.entry", "ts.P16.exit", "ts.P17.entry", 
+                                            "ts.P17.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "k.", "alpha.", 
+                                              "beta."), sort(rep(fleet.name, 3 + abs(p))), 
+                                            sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39), ~exp(x40)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -18) {
+        if (length(dates) != 38) {
+          stop("For a 1-fleet 18P transit model 'dates' must be a vector of length 38")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 41) {
+              stop("For a 1-fleet 18 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 41")
+            }
+          }
+          else {
+            if (length(par) != 23) {
+              stop("For a 1-fleet 18 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 23")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 42) {
+              stop("For a 1-fleet 18 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 42")
+            }
+          }
+          else {
+            if (length(par) != 24) {
+              stop("For a 1-fleet 18 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 24")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.P9.entry", "ts.Q9.exit", 
+                                            "ts.P10.entry", "ts.Q10.exit", "ts.P11.entry", 
+                                            "ts.Q11.exit", "ts.P12.entry", "ts.Q12.exit", 
+                                            "ts.P13.entry", "ts.Q13.exit", "ts.P14.entry", 
+                                            "ts.Q14.exit", "ts.P15.entry", "ts.Q15.exit", 
+                                            "ts.P16.entry", "ts.Q16.exit", "ts.P17.entry", 
+                                            "ts.Q17.exit", "ts.P18.entry", "ts.Q18.exit", 
+                                            "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "P9.", "Q9.", "P10.", "Q10.", 
+                                              "P11.", "Q11.", "P12.", "Q12.", "P13.", 
+                                              "Q13.", "P14.", "Q14.", "P15.", "Q15.", 
+                                              "P16.", "Q16.", "P17.", "Q17.", "P18.", 
+                                              "Q18.", "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                         3 + abs(p))), sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.P9.entry", "ts.P9.exit", 
+                                            "ts.P10.entry", "ts.P10.exit", "ts.P11.entry", 
+                                            "ts.P11.exit", "ts.P12.entry", "ts.P12.exit", 
+                                            "ts.P13.entry", "ts.P13.exit", "ts.P14.entry", 
+                                            "ts.P14.exit", "ts.P15.entry", "ts.P15.exit", 
+                                            "ts.P16.entry", "ts.P16.exit", "ts.P17.entry", 
+                                            "ts.P17.exit", "ts.P18.entry", "ts.P18.exit", 
+                                            "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "k.", "alpha.", 
+                                              "beta."), sort(rep(fleet.name, 3 + abs(p))), 
+                                            sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39), ~exp(x40), ~exp(x41)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -19) {
+        if (length(dates) != 40) {
+          stop("For a 1-fleet 19P transit model 'dates' must be a vector of length 40")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 43) {
+              stop("For a 1-fleet 19 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 43")
+            }
+          }
+          else {
+            if (length(par) != 24) {
+              stop("For a 1-fleet 19 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 24")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 44) {
+              stop("For a 1-fleet 19 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 44")
+            }
+          }
+          else {
+            if (length(par) != 25) {
+              stop("For a 1-fleet 19 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 25")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.P9.entry", "ts.Q9.exit", 
+                                            "ts.P10.entry", "ts.Q10.exit", "ts.P11.entry", 
+                                            "ts.Q11.exit", "ts.P12.entry", "ts.Q12.exit", 
+                                            "ts.P13.entry", "ts.Q13.exit", "ts.P14.entry", 
+                                            "ts.Q14.exit", "ts.P15.entry", "ts.Q15.exit", 
+                                            "ts.P16.entry", "ts.Q16.exit", "ts.P17.entry", 
+                                            "ts.Q17.exit", "ts.P18.entry", "ts.Q18.exit", 
+                                            "ts.P19.entry", "ts.Q19.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "P9.", "Q9.", "P10.", "Q10.", 
+                                              "P11.", "Q11.", "P12.", "Q12.", "P13.", 
+                                              "Q13.", "P14.", "Q14.", "P15.", "Q15.", 
+                                              "P16.", "Q16.", "P17.", "Q17.", "P18.", 
+                                              "Q18.", "P19.", "Q19.", "k.", "alpha.", 
+                                              "beta."), sort(rep(fleet.name, 3 + abs(p))), 
+                                            sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.P9.entry", "ts.P9.exit", 
+                                            "ts.P10.entry", "ts.P10.exit", "ts.P11.entry", 
+                                            "ts.P11.exit", "ts.P12.entry", "ts.P12.exit", 
+                                            "ts.P13.entry", "ts.P13.exit", "ts.P14.entry", 
+                                            "ts.P14.exit", "ts.P15.entry", "ts.P15.exit", 
+                                            "ts.P16.entry", "ts.P16.exit", "ts.P17.entry", 
+                                            "ts.P17.exit", "ts.P18.entry", "ts.P18.exit", 
+                                            "ts.P19.entry", "ts.P19.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                 3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                          ~exp(x43)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                          ~exp(x43), ~exp(x44)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -20) {
+        if (length(dates) != 42) {
+          stop("For a 1-fleet 20P transit model 'dates' must be a vector of length 42")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 45) {
+              stop("For a 1-fleet 20 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 45")
+            }
+          }
+          else {
+            if (length(par) != 25) {
+              stop("For a 1-fleet 20 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 25")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 46) {
+              stop("For a 1-fleet 20 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 46")
+            }
+          }
+          else {
+            if (length(par) != 26) {
+              stop("For a 1-fleet 20 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 26")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.P9.entry", "ts.Q9.exit", 
+                                            "ts.P10.entry", "ts.Q10.exit", "ts.P11.entry", 
+                                            "ts.Q11.exit", "ts.P12.entry", "ts.Q12.exit", 
+                                            "ts.P13.entry", "ts.Q13.exit", "ts.P14.entry", 
+                                            "ts.Q14.exit", "ts.P15.entry", "ts.Q15.exit", 
+                                            "ts.P16.entry", "ts.Q16.exit", "ts.P17.entry", 
+                                            "ts.Q17.exit", "ts.P18.entry", "ts.Q18.exit", 
+                                            "ts.P19.entry", "ts.Q19.exit", "ts.P20.entry", 
+                                            "ts.Q20.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "P9.", "Q9.", "P10.", "Q10.", 
+                                              "P11.", "Q11.", "P12.", "Q12.", "P13.", 
+                                              "Q13.", "P14.", "Q14.", "P15.", "Q15.", 
+                                              "P16.", "Q16.", "P17.", "Q17.", "P18.", 
+                                              "Q18.", "P19.", "Q19.", "P20.", "Q20.", 
+                                              "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                 3 + abs(p))), sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.P9.entry", "ts.P9.exit", 
+                                            "ts.P10.entry", "ts.P10.exit", "ts.P11.entry", 
+                                            "ts.P11.exit", "ts.P12.entry", "ts.P12.exit", 
+                                            "ts.P13.entry", "ts.P13.exit", "ts.P14.entry", 
+                                            "ts.P14.exit", "ts.P15.entry", "ts.P15.exit", 
+                                            "ts.P16.entry", "ts.P16.exit", "ts.P17.entry", 
+                                            "ts.P17.exit", "ts.P18.entry", "ts.P18.exit", 
+                                            "ts.P19.entry", "ts.P19.exit", "ts.P20.entry", 
+                                            "ts.P20.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                         3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                          ~exp(x43), ~exp(x44), ~exp(x45)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                          ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -21) {
+        if (length(dates) != 44) {
+          stop("For a 1-fleet 21P transit model 'dates' must be a vector of length 44")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 47) {
+              stop("For a 1-fleet 21 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 47")
+            }
+          }
+          else {
+            if (length(par) != 26) {
+              stop("For a 1-fleet 21 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 26")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 48) {
+              stop("For a 1-fleet 21 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 48")
+            }
+          }
+          else {
+            if (length(par) != 27) {
+              stop("For a 1-fleet 21 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 27")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.P9.entry", "ts.Q9.exit", 
+                                            "ts.P10.entry", "ts.Q10.exit", "ts.P11.entry", 
+                                            "ts.Q11.exit", "ts.P12.entry", "ts.Q12.exit", 
+                                            "ts.P13.entry", "ts.Q13.exit", "ts.P14.entry", 
+                                            "ts.Q14.exit", "ts.P15.entry", "ts.Q15.exit", 
+                                            "ts.P16.entry", "ts.Q16.exit", "ts.P17.entry", 
+                                            "ts.Q17.exit", "ts.P18.entry", "ts.Q18.exit", 
+                                            "ts.P19.entry", "ts.Q19.exit", "ts.P20.entry", 
+                                            "ts.Q20.exit", "ts.P21.entry", "ts.Q21.exit", 
+                                            "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "P9.", "Q9.", "P10.", "Q10.", 
+                                              "P11.", "Q11.", "P12.", "Q12.", "P13.", 
+                                              "Q13.", "P14.", "Q14.", "P15.", "Q15.", 
+                                              "P16.", "Q16.", "P17.", "Q17.", "P18.", 
+                                              "Q18.", "P19.", "Q19.", "P20.", "Q20.", 
+                                              "P21.", "Q21.", "k.", "alpha.", "beta."), 
+                                            sort(rep(fleet.name, 3 + abs(p))), sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.P9.entry", "ts.P9.exit", 
+                                            "ts.P10.entry", "ts.P10.exit", "ts.P11.entry", 
+                                            "ts.P11.exit", "ts.P12.entry", "ts.P12.exit", 
+                                            "ts.P13.entry", "ts.P13.exit", "ts.P14.entry", 
+                                            "ts.P14.exit", "ts.P15.entry", "ts.P15.exit", 
+                                            "ts.P16.entry", "ts.P16.exit", "ts.P17.entry", 
+                                            "ts.P17.exit", "ts.P18.entry", "ts.P18.exit", 
+                                            "ts.P19.entry", "ts.P19.exit", "ts.P20.entry", 
+                                            "ts.P20.exit", "ts.P21.entry", "ts.P21.exit", 
+                                            "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "P21.", "k.", "alpha.", "beta."), 
+                                            sort(rep(fleet.name, 3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                          ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                          ~exp(x47)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                          ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                          ~exp(x47), ~exp(x48)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -22) {
+        if (length(dates) != 46) {
+          stop("For a 1-fleet 22P transit model 'dates' must be a vector of length 46")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 49) {
+              stop("For a 1-fleet 22 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 49")
+            }
+          }
+          else {
+            if (length(par) != 27) {
+              stop("For a 1-fleet 22 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 27")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 50) {
+              stop("For a 1-fleet 22 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 50")
+            }
+          }
+          else {
+            if (length(par) != 28) {
+              stop("For a 1-fleet 22 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 28")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.P9.entry", "ts.Q9.exit", 
+                                            "ts.P10.entry", "ts.Q10.exit", "ts.P11.entry", 
+                                            "ts.Q11.exit", "ts.P12.entry", "ts.Q12.exit", 
+                                            "ts.P13.entry", "ts.Q13.exit", "ts.P14.entry", 
+                                            "ts.Q14.exit", "ts.P15.entry", "ts.Q15.exit", 
+                                            "ts.P16.entry", "ts.Q16.exit", "ts.P17.entry", 
+                                            "ts.Q17.exit", "ts.P18.entry", "ts.Q18.exit", 
+                                            "ts.P19.entry", "ts.Q19.exit", "ts.P20.entry", 
+                                            "ts.Q20.exit", "ts.P21.entry", "ts.Q21.exit", 
+                                            "ts.P22.entry", "ts.Q22.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "P9.", "Q9.", "P10.", "Q10.", 
+                                              "P11.", "Q11.", "P12.", "Q12.", "P13.", 
+                                              "Q13.", "P14.", "Q14.", "P15.", "Q15.", 
+                                              "P16.", "Q16.", "P17.", "Q17.", "P18.", 
+                                              "Q18.", "P19.", "Q19.", "P20.", "Q20.", 
+                                              "P21.", "Q21.", "P22.", "Q22.", "k.", "alpha.", 
+                                              "beta."), sort(rep(fleet.name, 3 + abs(p))), 
+                                            sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.P9.entry", "ts.P9.exit", 
+                                            "ts.P10.entry", "ts.P10.exit", "ts.P11.entry", 
+                                            "ts.P11.exit", "ts.P12.entry", "ts.P12.exit", 
+                                            "ts.P13.entry", "ts.P13.exit", "ts.P14.entry", 
+                                            "ts.P14.exit", "ts.P15.entry", "ts.P15.exit", 
+                                            "ts.P16.entry", "ts.P16.exit", "ts.P17.entry", 
+                                            "ts.P17.exit", "ts.P18.entry", "ts.P18.exit", 
+                                            "ts.P19.entry", "ts.P19.exit", "ts.P20.entry", 
+                                            "ts.P20.exit", "ts.P21.entry", "ts.P21.exit", 
+                                            "ts.P22.entry", "ts.P22.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "P21.", "P22.", "k.", "alpha.", 
+                                              "beta."), sort(rep(fleet.name, 3 + abs(p))), 
+                                            sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                          ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                          ~exp(x47), ~exp(x48), ~exp(x49)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                          ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                          ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -23) {
+        if (length(dates) != 48) {
+          stop("For a 1-fleet 23P transit model 'dates' must be a vector of length 48")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 51) {
+              stop("For a 1-fleet 23 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 51")
+            }
+          }
+          else {
+            if (length(par) != 28) {
+              stop("For a 1-fleet 23 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 28")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 52) {
+              stop("For a 1-fleet 23 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 52")
+            }
+          }
+          else {
+            if (length(par) != 29) {
+              stop("For a 1-fleet 23 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 29")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.P9.entry", "ts.Q9.exit", 
+                                            "ts.P10.entry", "ts.Q10.exit", "ts.P11.entry", 
+                                            "ts.Q11.exit", "ts.P12.entry", "ts.Q12.exit", 
+                                            "ts.P13.entry", "ts.Q13.exit", "ts.P14.entry", 
+                                            "ts.Q14.exit", "ts.P15.entry", "ts.Q15.exit", 
+                                            "ts.P16.entry", "ts.Q16.exit", "ts.P17.entry", 
+                                            "ts.Q17.exit", "ts.P18.entry", "ts.Q18.exit", 
+                                            "ts.P19.entry", "ts.Q19.exit", "ts.P20.entry", 
+                                            "ts.Q20.exit", "ts.P21.entry", "ts.Q21.exit", 
+                                            "ts.P22.entry", "ts.Q22.exit", "ts.P23.entry", 
+                                            "ts.Q23.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "P9.", "Q9.", "P10.", "Q10.", 
+                                              "P11.", "Q11.", "P12.", "Q12.", "P13.", 
+                                              "Q13.", "P14.", "Q14.", "P15.", "Q15.", 
+                                              "P16.", "Q16.", "P17.", "Q17.", "P18.", 
+                                              "Q18.", "P19.", "Q19.", "P20.", "Q20.", 
+                                              "P21.", "Q21.", "P22.", "Q22.", "P23.", 
+                                              "Q23.", "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                         3 + abs(p))), sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.P9.entry", "ts.P9.exit", 
+                                            "ts.P10.entry", "ts.P10.exit", "ts.P11.entry", 
+                                            "ts.P11.exit", "ts.P12.entry", "ts.P12.exit", 
+                                            "ts.P13.entry", "ts.P13.exit", "ts.P14.entry", 
+                                            "ts.P14.exit", "ts.P15.entry", "ts.P15.exit", 
+                                            "ts.P16.entry", "ts.P16.exit", "ts.P17.entry", 
+                                            "ts.P17.exit", "ts.P18.entry", "ts.P18.exit", 
+                                            "ts.P19.entry", "ts.P19.exit", "ts.P20.entry", 
+                                            "ts.P20.exit", "ts.P21.entry", "ts.P21.exit", 
+                                            "ts.P22.entry", "ts.P22.exit", "ts.P23.entry", 
+                                            "ts.P23.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "P21.", "P22.", "P23.", "k.", "alpha.", 
+                                              "beta."), sort(rep(fleet.name, 3 + abs(p))), 
+                                            sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                          ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                          ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                          ~exp(x51)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                          ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                          ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                          ~exp(x51), ~exp(x52)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -24) {
+        if (length(dates) != 50) {
+          stop("For a 1-fleet 24P transit model 'dates' must be a vector of length 50")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 53) {
+              stop("For a 1-fleet 24 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 53")
+            }
+          }
+          else {
+            if (length(par) != 29) {
+              stop("For a 1-fleet 24 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 29")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 54) {
+              stop("For a 1-fleet 24 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 54")
+            }
+          }
+          else {
+            if (length(par) != 30) {
+              stop("For a 1-fleet 24 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 30")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.P9.entry", "ts.Q9.exit", 
+                                            "ts.P10.entry", "ts.Q10.exit", "ts.P11.entry", 
+                                            "ts.Q11.exit", "ts.P12.entry", "ts.Q12.exit", 
+                                            "ts.P13.entry", "ts.Q13.exit", "ts.P14.entry", 
+                                            "ts.Q14.exit", "ts.P15.entry", "ts.Q15.exit", 
+                                            "ts.P16.entry", "ts.Q16.exit", "ts.P17.entry", 
+                                            "ts.Q17.exit", "ts.P18.entry", "ts.Q18.exit", 
+                                            "ts.P19.entry", "ts.Q19.exit", "ts.P20.entry", 
+                                            "ts.Q20.exit", "ts.P21.entry", "ts.Q21.exit", 
+                                            "ts.P22.entry", "ts.Q22.exit", "ts.P23.entry", 
+                                            "ts.Q23.exit", "ts.P24.entry", "ts.Q24.exit", 
+                                            "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "P9.", "Q9.", "P10.", "Q10.", 
+                                              "P11.", "Q11.", "P12.", "Q12.", "P13.", 
+                                              "Q13.", "P14.", "Q14.", "P15.", "Q15.", 
+                                              "P16.", "Q16.", "P17.", "Q17.", "P18.", 
+                                              "Q18.", "P19.", "Q19.", "P20.", "Q20.", 
+                                              "P21.", "Q21.", "P22.", "Q22.", "P23.", 
+                                              "Q23.", "P24.", "Q24.", "k.", "alpha.", 
+                                              "beta."), sort(rep(fleet.name, 3 + abs(p))), 
+                                            sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.P9.entry", "ts.P9.exit", 
+                                            "ts.P10.entry", "ts.P10.exit", "ts.P11.entry", 
+                                            "ts.P11.exit", "ts.P12.entry", "ts.P12.exit", 
+                                            "ts.P13.entry", "ts.P13.exit", "ts.P14.entry", 
+                                            "ts.P14.exit", "ts.P15.entry", "ts.P15.exit", 
+                                            "ts.P16.entry", "ts.P16.exit", "ts.P17.entry", 
+                                            "ts.P17.exit", "ts.P18.entry", "ts.P18.exit", 
+                                            "ts.P19.entry", "ts.P19.exit", "ts.P20.entry", 
+                                            "ts.P20.exit", "ts.P21.entry", "ts.P21.exit", 
+                                            "ts.P22.entry", "ts.P22.exit", "ts.P23.entry", 
+                                            "ts.P23.exit", "ts.P24.entry", "ts.P24.exit", 
+                                            "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "P21.", "P22.", "P23.", "P24.", 
+                                              "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                 3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                          ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                          ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                          ~exp(x51), ~exp(x52), ~exp(x53)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29)), mean = as.numeric(results1[i, 
+                                                                                                       1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                       ]$nhatend)), ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                          ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                          ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                          ~exp(x51), ~exp(x52), ~exp(x53), ~exp(x54)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p == -25) {
+        if (length(dates) != 52) {
+          stop("For a 1-fleet 25P transit model 'dates' must be a vector of length 52")
+        }
+        if (distr == "apnormal" | distr == "aplnormal" | 
+            distr == "poisson") {
+          if (partial) {
+            if (length(par) != 55) {
+              stop("For a 1-fleet 25 perturbations transit model with partial emmigration, with poisson or adjusted profile likelihood par must be a vector of length 55")
+            }
+          }
+          else {
+            if (length(par) != 30) {
+              stop("For a 1-fleet 25 perturbations transit model with total emmigration, with poisson or adjusted profile likelihood par must be a vector of length 30")
+            }
+          }
+        }
+        if (distr == "normal" | distr == "lognormal" | distr == 
+            "negbin" | distr == "gamma" | distr == "roblognormal" | 
+            distr == "gumbel") {
+          if (partial) {
+            if (length(par) != 56) {
+              stop("For a 1-fleet 25 perturbations transit model with partial emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 56")
+            }
+          }
+          else {
+            if (length(par) != 31) {
+              stop("For a 1-fleet 25 perturbations transit model with total emmigration, with negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution, par must be a vector of length 31")
+            }
+          }
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMNT", 
+                                                                            as.character(abs(p)), "P", sep = ""))), gr = NULL, 
+                                         dates = dates, obseff1 = x$Data[[fleet.name]][, 
+                                                                                       2], obscat1 = x$Data[[fleet.name]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         partial = partial, output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          if (partial) {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.Q1.exit", "ts.P2.entry", 
+                                            "ts.Q2.exit", "ts.P3.entry", "ts.Q3.exit", 
+                                            "ts.P4.entry", "ts.Q4.exit", "ts.P5.entry", 
+                                            "ts.Q5.exit", "ts.P6.entry", "ts.Q6.exit", 
+                                            "ts.P7.entry", "ts.Q7.exit", "ts.P8.entry", 
+                                            "ts.Q8.exit", "ts.P9.entry", "ts.Q9.exit", 
+                                            "ts.P10.entry", "ts.Q10.exit", "ts.P11.entry", 
+                                            "ts.Q11.exit", "ts.P12.entry", "ts.Q12.exit", 
+                                            "ts.P13.entry", "ts.Q13.exit", "ts.P14.entry", 
+                                            "ts.Q14.exit", "ts.P15.entry", "ts.Q15.exit", 
+                                            "ts.P16.entry", "ts.Q16.exit", "ts.P17.entry", 
+                                            "ts.Q17.exit", "ts.P18.entry", "ts.Q18.exit", 
+                                            "ts.P19.entry", "ts.Q19.exit", "ts.P20.entry", 
+                                            "ts.Q20.exit", "ts.P21.entry", "ts.Q21.exit", 
+                                            "ts.P22.entry", "ts.Q22.exit", "ts.P23.entry", 
+                                            "ts.Q23.exit", "ts.P24.entry", "ts.Q24.exit", 
+                                            "ts.P25.entry", "ts.Q25.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "Q1.", 
+                                              "P2.", "Q2.", "P3.", "Q3.", "P4.", "Q4.", 
+                                              "P5.", "Q5.", "P6.", "Q6.", "P7.", "Q7.", 
+                                              "P8.", "Q8.", "P9.", "Q9.", "P10.", "Q10.", 
+                                              "P11.", "Q11.", "P12.", "Q12.", "P13.", 
+                                              "Q13.", "P14.", "Q14.", "P15.", "Q15.", 
+                                              "P16.", "Q16.", "P17.", "Q17.", "P18.", 
+                                              "Q18.", "P19.", "Q19.", "P20.", "Q20.", 
+                                              "P21.", "Q21.", "P22.", "Q22.", "P23.", 
+                                              "Q23.", "P24.", "Q24.", "P25.", "Q25.", 
+                                              "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                 3 + abs(p))), sep = ""))
+          }
+          else {
+            names(results2[[i]]$Dates) <- c("ts.start", 
+                                            "ts.P1.entry", "ts.P1.exit", "ts.P2.entry", 
+                                            "ts.P2.exit", "ts.P3.entry", "ts.P3.exit", 
+                                            "ts.P4.entry", "ts.P4.exit", "ts.P5.entry", 
+                                            "ts.P5.exit", "ts.P6.entry", "ts.P6.exit", 
+                                            "ts.P7.entry", "ts.P7.exit", "ts.P8.entry", 
+                                            "ts.P8.exit", "ts.P9.entry", "ts.P9.exit", 
+                                            "ts.P10.entry", "ts.P10.exit", "ts.P11.entry", 
+                                            "ts.P11.exit", "ts.P12.entry", "ts.P12.exit", 
+                                            "ts.P13.entry", "ts.P13.exit", "ts.P14.entry", 
+                                            "ts.P14.exit", "ts.P15.entry", "ts.P15.exit", 
+                                            "ts.P16.entry", "ts.P16.exit", "ts.P17.entry", 
+                                            "ts.P17.exit", "ts.P18.entry", "ts.P18.exit", 
+                                            "ts.P19.entry", "ts.P19.exit", "ts.P20.entry", 
+                                            "ts.P20.exit", "ts.P21.entry", "ts.P21.exit", 
+                                            "ts.P22.entry", "ts.P22.exit", "ts.P23.entry", 
+                                            "ts.P23.exit", "ts.P24.entry", "ts.P24.exit", 
+                                            "ts.P25.entry", "ts.P25.exit", "ts.end")
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "P21.", "P22.", "P23.", "P24.", 
+                                              "P25.", "k.", "alpha.", "beta."), sort(rep(fleet.name, 
+                                                                                         3 + abs(p))), sep = ""))
+          }
+          if (distr == "gamma" | distr == "normal" | distr == 
+              "lognormal" | distr == "negbin" | distr == 
+              "roblognormal" | distr == "gumbel") {
+            par.names <- c(par.names, paste("psi.", fleet.name, 
+                                            sep = ""))
+          }
+          results2[[i]]$converg <- "FAIL"
+          results2[[i]]$kkt <- NA
+          results2[[i]]$AIC <- NA
+          results2[[i]]$bt.par <- NA
+          results2[[i]]$num.grads <- NA
+          results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+          results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                      length(par.names))
+          if (length(temp[i, ]$ngatend) == length(par.names) & 
+              !any(is.na(temp[i, ]$nhatend)) & 1/kappa(temp[i, 
+              ]$nhatend) > 1e-15) {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par.names), length(par.names))
+            if (distr == "poisson" | distr == "apnormal" | 
+                distr == "aplnormal") {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                          ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                          ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                          ~exp(x51), ~exp(x52), ~exp(x53), ~exp(x54), 
+                                          ~exp(x55)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30)), 
+                                 mean = as.numeric(results1[i, 1:length(par)]), 
+                                 cov = try(solve(temp[i, ]$nhatend)), 
+                                 ses = FALSE)
+              }
+            }
+            else {
+              if (partial) {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                          ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                          ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                          ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                          ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                          ~exp(x51), ~exp(x52), ~exp(x53), ~exp(x54), 
+                                          ~exp(x55), ~exp(x56)), mean = as.numeric(results1[i, 
+                                                                                            1:length(par)]), cov = try(solve(temp[i, 
+                                                                                            ]$nhatend)), ses = FALSE)
+              }
+              else {
+                v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                          ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                          ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                          ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                          ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                          ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                          ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                          ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                          ~exp(x31)), mean = as.numeric(results1[i, 
+                                                                                 1:length(par)]), cov = try(solve(temp[i, 
+                                                                                 ]$nhatend)), ses = FALSE)
+              }
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+    }
+    else if (length(fleet.name) == 2) {
+      if (p[1] > p[2]) {
+        stop("The number of perturbations of the first fleet must equal or less than the number of perturbations of the second fleet")
+      }
+      if (sum(sort(dates[1:(p[1] + 1)]) == dates[1:(p[1] + 
+                                                    1)]) < length(dates[1:(p[1] + 1)]) || sum(sort(dates[(p[1] + 
+                                                                                                          2):(p[1] + p[2] + 2)]) == dates[(p[1] + 2):(p[1] + 
+                                                                                                                                                      p[2] + 2)]) < length(dates[(p[1] + 2):(p[1] + p[2] + 
+                                                                                                                                                                                             2)])) {
+        stop("Perturbation dates for each fleet should be arranged in ascending order")
+      }
+      if (length(p) != 2) {
+        stop("For a 2-fleet model 'p' must be of length 2")
+      }
+      distr.set <- c("poisson", "negbin", "normal", "apnormal", 
+                     "lognormal", "aplnormal", "gamma", "roblognormal", 
+                     "gumbel")
+      sdistr.set <- c("poisson", "apnormal", "aplnormal")
+      distr.set <- combn(distr.set, 2)
+      if (!sum(distr %in% distr.set) == 2) {
+        stop("'distr' must be a character vector of length 2 with a combination of 'normal','apnormal','lognormal','aplnormal', 'gamma', 'poisson', 'negbin', 'roblognormal' or 'gumbel', see help pages for CatDynFit")
+      }
+      if (distr[1] != distr[2]) {
+        warning("When using two different distributions for the fit of a 2-fleet system the calculation of the AIC may be questionable \n Specially when one is for continuous observations and the other is for counts")
+      }
+      if (p[1] == 0 & p[2] == 0) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 10) {
+            stop("For a 2-fleet 0 perturbation model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 10 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 9) {
+            stop("For a 2-fleet 0 perturbation model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 9 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 8) {
+            stop("For a 2-fleet 0 perturbation model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 8")
+          }
+        }
+        if (length(dates) != 2) {
+          stop("For a 2-fleet 0P 0P (pure depletion) model 'dates' must be a vector of length 2")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("k.", "alpha.", 
+                                              "beta.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                       3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("k.", 
+                                                "alpha.", "beta.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi2.", 
+                                                                                                               fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("k.", 
+                                                "alpha.", "beta.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                               fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("k.", "alpha.", 
+                                              "beta.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                       3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8)), mean = as.numeric(results1[i, 
+                                                                                        1:length(par)]), cov = try(solve(temp[i, 
+                                                                                        ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9)), mean = as.numeric(results1[i, 
+                                                                                                  1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                  ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 0 & p[2] == 1) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 11) {
+            stop("For a 2-fleet 0P 1P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 11 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 10) {
+            stop("For a 2-fleet 0P 1P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 10 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 9) {
+            stop("For a 2-fleet 0P 1P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 9")
+          }
+        }
+        if (length(dates) != 3) {
+          stop("For a 2-fleet 0P 1P (pure depletion) model 'dates' must be a vector of length 3")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("k.", "alpha.", 
+                                              "beta.", "P1.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("k.", 
+                                                "alpha.", "beta.", "P1.", "k.", "alpha.", 
+                                                "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                            rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                             paste("psi2.", fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("k.", 
+                                                "alpha.", "beta.", "P1.", "k.", "alpha.", 
+                                                "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                            rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                             paste("psi1.", fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("k.", "alpha.", 
+                                              "beta.", "P1.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                             fleet.name[1], sep = ""), paste("psi2.", 
+                                                                                                                                             fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9)), mean = as.numeric(results1[i, 
+                                                                                                  1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                  ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 0 & p[2] == 2) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 12) {
+            stop("For a 2-fleet 0P 2P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 12 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 11) {
+            stop("For a 2-fleet 0P 2P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 11 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 10) {
+            stop("For a 2-fleet 0P 2P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 10")
+          }
+        }
+        if (length(dates) != 4) {
+          stop("For a 2-Fleet 0P 2P model 'dates' must be a vector of length 4")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F2", "ts.P2F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("k.", 
+                                                "alpha.", "beta.", "P1.", "P2.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("k.", 
+                                                "alpha.", "beta.", "P1.", "P2.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                             fleet.name[1], sep = ""), paste("psi2.", 
+                                                                                                                                             fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 0 & p[2] == 3) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 13) {
+            stop("For a 2-fleet 0P 3P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 13 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 12) {
+            stop("For a 2-fleet 0P 3P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 12 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 11) {
+            stop("For a 2-fleet 0P 3P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 11")
+          }
+        }
+        if (length(dates) != 5) {
+          stop("For a 2-Fleet 0P 3P model 'dates' must be a vector of length 5")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F2", "ts.P2F2", "ts.P3F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("k.", 
+                                                "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                                "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("k.", 
+                                                "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                                "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                           paste("psi1.", fleet.name[1], sep = ""), 
+                           paste("psi2.", fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 0 & p[2] == 4) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 14) {
+            stop("For a 2-fleet 0P 4P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 14 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 13) {
+            stop("For a 2-fleet 0P 4P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 13 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 12) {
+            stop("For a 2-fleet 0P 4P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 12")
+          }
+        }
+        if (length(dates) != 6) {
+          stop("For a 2-Fleet 0P 4P model 'dates' must be a vector of length 6")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F2", "ts.P2F2", "ts.P3F2", "ts.P4F2", 
+                                          "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "P4.", "k.", 
+                                              "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                        3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("k.", 
+                                                "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                                "P4.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                       3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("k.", 
+                                                "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                                "P4.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                       3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "P4.", "k.", 
+                                              "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                        3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 0 & p[2] == 5) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 15) {
+            stop("For a 2-fleet 0P 5P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 15 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 14) {
+            stop("For a 2-fleet 0P 5P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 14 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 13) {
+            stop("For a 2-fleet 0P 5P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 13")
+          }
+        }
+        if (length(dates) != 7) {
+          stop("For a 2-Fleet 0P 5P model 'dates' must be a vector of length 7")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F2", "ts.P2F2", "ts.P3F2", "ts.P4F2", 
+                                          "ts.P5F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                              "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                              3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("k.", 
+                                                "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                                "P4.", "P5.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi2.", 
+                                                                                                               fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("k.", 
+                                                "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                                "P4.", "P5.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                               fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                              "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                              3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 1 & p[2] == 1) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 12) {
+            stop("For a 2-fleet 1P 1P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 12 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 11) {
+            stop("For a 2-fleet 1P 1P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 11 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 10) {
+            stop("For a 2-fleet 1P 1P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 10")
+          }
+        }
+        if (length(dates) != 4) {
+          stop("For a 2-Fleet 1P 1P model 'dates' must be a vector of length 4")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P1F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "k.", 
+                                              "alpha.", "beta.", "P1.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "k.", "alpha.", "beta.", "P1.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "k.", "alpha.", "beta.", "P1.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "k.", 
+                                              "alpha.", "beta.", "P1.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                           paste("psi1.", fleet.name[1], sep = ""), 
+                           paste("psi2.", fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 1 & p[2] == 2) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 13) {
+            stop("For a 2-fleet 1P 2P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 13 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 12) {
+            stop("For a 2-fleet 1P 2P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 12 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 11) {
+            stop("For a 2-fleet 1P 2P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 11")
+          }
+        }
+        if (length(dates) != 5) {
+          stop("For a 2-Fleet 1P 2P model 'dates' must be a vector of length 5")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P1F2", "ts.P2F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "k.", 
+                                              "alpha.", "beta.", "P1.", "P2.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                                "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                                "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "k.", 
+                                              "alpha.", "beta.", "P1.", "P2.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                           paste("psi1.", fleet.name[1], sep = ""), 
+                           paste("psi2.", fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 1 & p[2] == 3) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 14) {
+            stop("For a 2-fleet 1P 3P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 14 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 13) {
+            stop("For a 2-fleet 1P 3P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 13 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 12) {
+            stop("For a 2-fleet 1P 3P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 12")
+          }
+        }
+        if (length(dates) != 6) {
+          stop("For a 2-Fleet 1P 3P model 'dates' must be a vector of length 6")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P1F2", "ts.P2F2", "ts.P3F2", 
+                                          "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "k.", 
+                                              "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                              3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                                "P3.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                       3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                                "P3.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                       3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "k.", 
+                                              "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                              3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 1 & p[2] == 4) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 15) {
+            stop("For a 2-fleet 1P 4P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 15 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 14) {
+            stop("For a 2-fleet 1P 4P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 14 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 13) {
+            stop("For a 2-fleet 1P 4P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 13")
+          }
+        }
+        if (length(dates) != 7) {
+          stop("For a 2-Fleet 1P 4P model 'dates' must be a vector of length 7")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P1F2", "ts.P2F2", "ts.P3F2", 
+                                          "ts.P4F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "k.", 
+                                              "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                     3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                                "P3.", "P4.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi2.", 
+                                                                                                               fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                                "P3.", "P4.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                               fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "k.", 
+                                              "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                     3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 1 & p[2] == 5) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 16) {
+            stop("For a 2-fleet 1P 5P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 16 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 15) {
+            stop("For a 2-fleet 1P 5P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 15 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 14) {
+            stop("For a 2-fleet 1P 5P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 14")
+          }
+        }
+        if (length(dates) != 8) {
+          stop("For a 2-Fleet 1P 5P model 'dates' must be a vector of length 8")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P1F2", "ts.P2F2", "ts.P3F2", 
+                                          "ts.P4F2", "ts.P5F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "k.", 
+                                              "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "P5.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                                "P3.", "P4.", "P5.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi2.", 
+                                                                                                               fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                                "P3.", "P4.", "P5.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                               fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "k.", 
+                                              "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "P5.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                             fleet.name[1], sep = ""), paste("psi2.", 
+                                                                                                                                             fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 2 & p[2] == 2) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 14) {
+            stop("For a 2-fleet 2P 2P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 14 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 13) {
+            stop("For a 2-fleet 2P 2P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 13 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 12) {
+            stop("For a 2-fleet 2P 2P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 12")
+          }
+        }
+        if (length(dates) != 6) {
+          stop("For a 2-Fleet 2P 2P model 'dates' must be a vector of length 6")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P1F2", "ts.P2F2", 
+                                          "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "k.", "alpha.", "beta.", "P1.", "P2.", "k.", 
+                                              "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                        3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "k.", "alpha.", "beta.", "P1.", 
+                                                "P2.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                       3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "k.", "alpha.", "beta.", "P1.", 
+                                                "P2.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                       3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "k.", "alpha.", "beta.", "P1.", "P2.", "k.", 
+                                              "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                        3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 2 & p[2] == 3) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 15) {
+            stop("For a 2-fleet 2P 3P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 15 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 14) {
+            stop("For a 2-fleet 2P 3P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 14 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 13) {
+            stop("For a 2-fleet 2P 3P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 13")
+          }
+        }
+        if (length(dates) != 7) {
+          stop("For a 2-Fleet 2P 3P model 'dates' must be a vector of length 7")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P1F2", "ts.P2F2", 
+                                          "ts.P3F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "k.", "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                              3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "k.", "alpha.", "beta.", "P1.", 
+                                                "P2.", "P3.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi2.", 
+                                                                                                               fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "k.", "alpha.", "beta.", "P1.", 
+                                                "P2.", "P3.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                               fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "k.", "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                              3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 2 & p[2] == 4) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 16) {
+            stop("For a 2-fleet 2P 4P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 16 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 15) {
+            stop("For a 2-fleet 2P 4P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 15 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 14) {
+            stop("For a 2-fleet 2P 4P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 14")
+          }
+        }
+        if (length(dates) != 8) {
+          stop("For a 2-Fleet 2P 4P model 'dates' must be a vector of length 8")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P1F2", "ts.P2F2", 
+                                          "ts.P3F2", "ts.P4F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "k.", "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                     3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "k.", "alpha.", "beta.", "P1.", 
+                                                "P2.", "P3.", "P4.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi2.", 
+                                                                                                               fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "k.", "alpha.", "beta.", "P1.", 
+                                                "P2.", "P3.", "P4.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                               fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "k.", "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                     3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 2 & p[2] == 5) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 17) {
+            stop("For a 2-fleet 2P 5P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 17 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 16) {
+            stop("For a 2-fleet 2P 5P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 16 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 15) {
+            stop("For a 2-fleet 2P 5P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 15")
+          }
+        }
+        if (length(dates) != 9) {
+          stop("For a 2-Fleet 2P 5P model 'dates' must be a vector of length 9")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P1F2", "ts.P2F2", 
+                                          "ts.P3F2", "ts.P4F2", "ts.P5F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "k.", "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "P5.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "k.", "alpha.", "beta.", "P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "k.", "alpha.", 
+                                                "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                            rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                             paste("psi2.", fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "k.", "alpha.", "beta.", "P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "k.", "alpha.", 
+                                                "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                            rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                             paste("psi1.", fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "k.", "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "P5.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                             fleet.name[1], sep = ""), paste("psi2.", 
+                                                                                                                                             fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(15)), mean = as.numeric(results1[i, 
+                                                                              1:length(par)]), cov = try(solve(temp[i, 
+                                                                              ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 3 & p[2] == 3) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 16) {
+            stop("For a 2-fleet 3P 3P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 16 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 15) {
+            stop("For a 2-fleet 3P 3P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 15 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 14) {
+            stop("For a 2-fleet 3P 3P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 14")
+          }
+        }
+        if (length(dates) != 8) {
+          stop("For a 2-Fleet 3P 3P model 'dates' must be a vector of length 8")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P1F2", 
+                                          "ts.P2F2", "ts.P3F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                              "P3.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                     3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi2.", 
+                                                                                                               fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                               fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                              "P3.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                     3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 3 & p[2] == 4) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 17) {
+            stop("For a 2-fleet 3P 4P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 17 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 16) {
+            stop("For a 2-fleet 3P 4P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 16 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 15) {
+            stop("For a 2-fleet 3P 4P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 15")
+          }
+        }
+        if (length(dates) != 9) {
+          stop("For a 2-Fleet 3P 4P model 'dates' must be a vector of length 9")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P1F2", 
+                                          "ts.P2F2", "ts.P3F2", "ts.P4F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                              "P3.", "P4.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "P4.", "k.", "alpha.", 
+                                                "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                            rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                             paste("psi2.", fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "P4.", "k.", "alpha.", 
+                                                "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                            rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                             paste("psi1.", fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                              "P3.", "P4.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                             fleet.name[1], sep = ""), paste("psi2.", 
+                                                                                                                                             fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 3 & p[2] == 5) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 18) {
+            stop("For a 2-fleet 3P 5P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 18 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 17) {
+            stop("For a 2-fleet 3P 5P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 17 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 16) {
+            stop("For a 2-fleet 3P 5P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 16")
+          }
+        }
+        if (length(dates) != 10) {
+          stop("For a 2-Fleet 3P 5P model 'dates' must be a vector of length 10")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P1F2", 
+                                          "ts.P2F2", "ts.P3F2", "ts.P4F2", "ts.P5F2", 
+                                          "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "P4.", "P5.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "P4.", "P5.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                             fleet.name[1], sep = ""), paste("psi2.", 
+                                                                                                                                             fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 4 & p[2] == 4) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 18) {
+            stop("For a 2-fleet 4P 4P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 18 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 17) {
+            stop("For a 2-fleet 4P 4P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 17 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 16) {
+            stop("For a 2-fleet 4P 4P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 16")
+          }
+        }
+        if (length(dates) != 10) {
+          stop("For a 2-Fleet 4P 4P model 'dates' must be a vector of length 10")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P1F2", "ts.P2F2", "ts.P3F2", "ts.P4F2", 
+                                          "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "k.", "alpha.", "beta.", "P1.", 
+                                              "P2.", "P3.", "P4.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "P4.", "k.", "alpha.", 
+                                                "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                            rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                             paste("psi2.", fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "P4.", "k.", "alpha.", 
+                                                "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                            rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                             paste("psi1.", fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "k.", "alpha.", "beta.", "P1.", 
+                                              "P2.", "P3.", "P4.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                             fleet.name[1], sep = ""), paste("psi2.", 
+                                                                                                                                             fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 4 & p[2] == 5) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 19) {
+            stop("For a 2-fleet 4P 5P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 19 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 18) {
+            stop("For a 2-fleet 4P 5P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 18 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 17) {
+            stop("For a 2-fleet 4P 5P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 17")
+          }
+        }
+        if (length(dates) != 11) {
+          stop("For a 2-Fleet 4P 5P model 'dates' must be a vector of length 11")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P1F2", "ts.P2F2", "ts.P3F2", "ts.P4F2", 
+                                          "ts.P5F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "k.", "alpha.", "beta.", "P1.", 
+                                              "P2.", "P3.", "P4.", "P5.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "P4.", "P5.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "P4.", "P5.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "k.", "alpha.", "beta.", "P1.", 
+                                              "P2.", "P3.", "P4.", "P5.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                           paste("psi1.", fleet.name[1], sep = ""), 
+                           paste("psi2.", fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 5 & p[2] == 5) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 20) {
+            stop("For a 2-fleet 5P 5P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 20 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 19) {
+            stop("For a 2-fleet 5P 5P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 19 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 18) {
+            stop("For a 2-fleet 5P 5P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 18")
+          }
+        }
+        if (length(dates) != 12) {
+          stop("For a 2-Fleet 5P 5P model 'dates' must be a vector of length 12")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P1F2", "ts.P2F2", "ts.P3F2", 
+                                          "ts.P4F2", "ts.P5F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "k.", "alpha.", "beta.", 
+                                              "P1.", "P2.", "P3.", "P4.", "P5.", "k.", 
+                                              "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                        3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "k.", "alpha.", 
+                                                "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                                "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "k.", "alpha.", 
+                                                "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                                "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "k.", "alpha.", "beta.", 
+                                              "P1.", "P2.", "P3.", "P4.", "P5.", "k.", 
+                                              "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                        3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 6 & p[2] == 6) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 22) {
+            stop("For a 2-fleet 6P 6P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 22 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 21) {
+            stop("For a 2-fleet 6P 6P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 21 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 20) {
+            stop("For a 2-fleet 6P 6P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 20")
+          }
+        }
+        if (length(dates) != 14) {
+          stop("For a 2-Fleet 6P 6P model 'dates' must be a vector of length 14")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P1F2", "ts.P2F2", 
+                                          "ts.P3F2", "ts.P4F2", "ts.P5F2", "ts.P6F2", 
+                                          "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                              "P6.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                     3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "k.", 
+                                                "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                                "P4.", "P5.", "P6.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi2.", 
+                                                                                                               fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "k.", 
+                                                "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                                "P4.", "P5.", "P6.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                               fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                              "P6.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                     3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 7 & p[2] == 7) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 24) {
+            stop("For a 2-fleet 7P 7P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 24 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 23) {
+            stop("For a 2-fleet 7P 7P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 23 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 22) {
+            stop("For a 2-fleet 7P 7P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 22")
+          }
+        }
+        if (length(dates) != 16) {
+          stop("For a 2-Fleet 7P 7P model 'dates' must be a vector of length 16")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P1F2", 
+                                          "ts.P2F2", "ts.P3F2", "ts.P4F2", "ts.P5F2", 
+                                          "ts.P6F2", "ts.P7F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "k.", 
+                                              "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "P5.", "P6.", "P7.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                                "P3.", "P4.", "P5.", "P6.", "P7.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                                "P3.", "P4.", "P5.", "P6.", "P7.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "k.", 
+                                              "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "P5.", "P6.", "P7.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                           paste("psi1.", fleet.name[1], sep = ""), 
+                           paste("psi2.", fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 8 & p[2] == 8) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 26) {
+            stop("For a 2-fleet 8P 8P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 26 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 25) {
+            stop("For a 2-fleet 8P 8P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 25 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 24) {
+            stop("For a 2-fleet 8P 8P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 24")
+          }
+        }
+        if (length(dates) != 18) {
+          stop("For a 2-Fleet 8P 8P model 'dates' must be a vector of length 18")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P1F2", "ts.P2F2", "ts.P3F2", "ts.P4F2", 
+                                          "ts.P5F2", "ts.P6F2", "ts.P7F2", "ts.P8F2", 
+                                          "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "k.", "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "P5.", "P6.", "P7.", "P8.", "k.", 
+                                              "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                        3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "k.", "alpha.", "beta.", "P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                       3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "k.", "alpha.", "beta.", "P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                       3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "k.", "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "P5.", "P6.", "P7.", "P8.", "k.", 
+                                              "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                        3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 9 & p[2] == 9) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 28) {
+            stop("For a 2-fleet 9P 9P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 28 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 27) {
+            stop("For a 2-fleet 9P 9P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 27 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 26) {
+            stop("For a 2-fleet 9P 9P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 26")
+          }
+        }
+        if (length(dates) != 20) {
+          stop("For a 2-Fleet 9P 9P model 'dates' must be a vector of length 20")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P9F1", "ts.P1F2", "ts.P2F2", "ts.P3F2", 
+                                          "ts.P4F2", "ts.P5F2", "ts.P6F2", "ts.P7F2", 
+                                          "ts.P8F2", "ts.P9F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                     3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "P4.", "P5.", "P6.", 
+                                                "P7.", "P8.", "P9.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi2.", 
+                                                                                                               fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "P4.", "P5.", "P6.", 
+                                                "P7.", "P8.", "P9.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                               fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                     3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 10 & p[2] == 10) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 30) {
+            stop("For a 2-fleet 10P 10P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 30 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 29) {
+            stop("For a 2-fleet 10P 10P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 29 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 28) {
+            stop("For a 2-fleet 10P 10P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 28")
+          }
+        }
+        if (length(dates) != 22) {
+          stop("For a 2-Fleet 10P 10P model 'dates' must be a vector of length 22")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P9F1", "ts.P10F1", "ts.P1F2", "ts.P2F2", 
+                                          "ts.P3F2", "ts.P4F2", "ts.P5F2", "ts.P6F2", 
+                                          "ts.P7F2", "ts.P8F2", "ts.P9F2", "ts.P10F2", 
+                                          "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "k.", "alpha.", "beta.", 
+                                              "P1.", "P2.", "P3.", "P4.", "P5.", "P6.", 
+                                              "P7.", "P8.", "P9.", "P10.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "k.", "alpha.", 
+                                                "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                                "P6.", "P7.", "P8.", "P9.", "P10.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "k.", "alpha.", 
+                                                "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                                "P6.", "P7.", "P8.", "P9.", "P10.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "k.", "alpha.", "beta.", 
+                                              "P1.", "P2.", "P3.", "P4.", "P5.", "P6.", 
+                                              "P7.", "P8.", "P9.", "P10.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                           paste("psi1.", fleet.name[1], sep = ""), 
+                           paste("psi2.", fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 11 & p[2] == 11) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 32) {
+            stop("For a 2-fleet 11P 11P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 32 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 31) {
+            stop("For a 2-fleet 11P 11P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 31 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 30) {
+            stop("For a 2-fleet 11P 11P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 30")
+          }
+        }
+        if (length(dates) != 24) {
+          stop("For a 2-Fleet 11P 11P model 'dates' must be a vector of length 24")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P9F1", "ts.P10F1", "ts.P11F1", "ts.P1F2", 
+                                          "ts.P2F2", "ts.P3F2", "ts.P4F2", "ts.P5F2", 
+                                          "ts.P6F2", "ts.P7F2", "ts.P8F2", "ts.P9F2", 
+                                          "ts.P10F2", "ts.P11F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "k.", "alpha.", "beta.", 
+                                              "P1.", "P2.", "P3.", "P4.", "P5.", "P6.", 
+                                              "P7.", "P8.", "P9.", "P10.", "P11.", "k.", 
+                                              "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                        3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "k.", "alpha.", 
+                                                "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                                "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                                "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "k.", "alpha.", 
+                                                "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                                "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                                "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "k.", "alpha.", "beta.", 
+                                              "P1.", "P2.", "P3.", "P4.", "P5.", "P6.", 
+                                              "P7.", "P8.", "P9.", "P10.", "P11.", "k.", 
+                                              "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                        3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 12 & p[2] == 12) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 34) {
+            stop("For a 2-fleet 12P 12P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 34 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 33) {
+            stop("For a 2-fleet 12P 12P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 33 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 32) {
+            stop("For a 2-fleet 12P 12P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 32")
+          }
+        }
+        if (length(dates) != 26) {
+          stop("For a 2-Fleet 12P 12P model 'dates' must be a vector of length 26")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P9F1", "ts.P10F1", "ts.P11F1", "ts.P12F1", 
+                                          "ts.P1F2", "ts.P2F2", "ts.P3F2", "ts.P4F2", 
+                                          "ts.P5F2", "ts.P6F2", "ts.P7F2", "ts.P8F2", 
+                                          "ts.P9F2", "ts.P10F2", "ts.P11F2", "ts.P12F2", 
+                                          "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                              "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                              "P12.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                      3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                                "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                                "P9.", "P10.", "P11.", "P12.", "k.", "alpha.", 
+                                                "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                            rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                             paste("psi2.", fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                                "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                                "P9.", "P10.", "P11.", "P12.", "k.", "alpha.", 
+                                                "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                            rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                             paste("psi1.", fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                              "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                              "P12.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                      3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 13 & p[2] == 13) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 36) {
+            stop("For a 2-fleet 13P 13P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 36 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 35) {
+            stop("For a 2-fleet 13P 13P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 35 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 34) {
+            stop("For a 2-fleet 13P 13P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 34")
+          }
+        }
+        if (length(dates) != 28) {
+          stop("For a 2-Fleet 13P 13P model 'dates' must be a vector of length 28")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P9F1", "ts.P10F1", "ts.P11F1", "ts.P12F1", 
+                                          "ts.P13F1", "ts.P1F2", "ts.P2F2", "ts.P3F2", 
+                                          "ts.P4F2", "ts.P5F2", "ts.P6F2", "ts.P7F2", 
+                                          "ts.P8F2", "ts.P9F2", "ts.P10F2", "ts.P11F2", 
+                                          "ts.P12F2", "ts.P13F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "k.", 
+                                              "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "P5.", "P6.", "P7.", "P8.", "P9.", 
+                                              "P10.", "P11.", "P12.", "P13.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "k.", "alpha.", "beta.", "P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                        3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "k.", "alpha.", "beta.", "P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                        3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "k.", 
+                                              "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "P5.", "P6.", "P7.", "P8.", "P9.", 
+                                              "P10.", "P11.", "P12.", "P13.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                           paste("psi1.", fleet.name[1], sep = ""), 
+                           paste("psi2.", fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 14 & p[2] == 14) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 38) {
+            stop("For a 2-fleet 14P 14P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 38 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 37) {
+            stop("For a 2-fleet 14P 14P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 37 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 36) {
+            stop("For a 2-fleet 14P 14P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 36")
+          }
+        }
+        if (length(dates) != 30) {
+          stop("For a 2-Fleet 14P 14P model 'dates' must be a vector of length 30")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P9F1", "ts.P10F1", "ts.P11F1", "ts.P12F1", 
+                                          "ts.P13F1", "ts.P14F1", "ts.P1F2", "ts.P2F2", 
+                                          "ts.P3F2", "ts.P4F2", "ts.P5F2", "ts.P6F2", 
+                                          "ts.P7F2", "ts.P8F2", "ts.P9F2", "ts.P10F2", 
+                                          "ts.P11F2", "ts.P12F2", "ts.P13F2", "ts.P14F2", 
+                                          "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "k.", "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "P5.", "P6.", "P7.", "P8.", "P9.", 
+                                              "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                              3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "P4.", "P5.", "P6.", 
+                                                "P7.", "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi2.", 
+                                                                                                               fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "P4.", "P5.", "P6.", 
+                                                "P7.", "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                               fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "k.", "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "P5.", "P6.", "P7.", "P8.", "P9.", 
+                                              "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                              3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 15 & p[2] == 15) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 40) {
+            stop("For a 2-fleet 15P 15P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 40 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 39) {
+            stop("For a 2-fleet 15P 15P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 39 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 38) {
+            stop("For a 2-fleet 15P 15P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 38")
+          }
+        }
+        if (length(dates) != 32) {
+          stop("For a 2-Fleet 15P 15P model 'dates' must be a vector of length 32")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P9F1", "ts.P10F1", "ts.P11F1", "ts.P12F1", 
+                                          "ts.P13F1", "ts.P14F1", "ts.P15F1", "ts.P1F2", 
+                                          "ts.P2F2", "ts.P3F2", "ts.P4F2", "ts.P5F2", 
+                                          "ts.P6F2", "ts.P7F2", "ts.P8F2", "ts.P9F2", 
+                                          "ts.P10F2", "ts.P11F2", "ts.P12F2", "ts.P13F2", 
+                                          "ts.P14F2", "ts.P15F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "k.", "alpha.", "beta.", "P1.", 
+                                              "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                              "P8.", "P9.", "P10.", "P11.", "P12.", "P13.", 
+                                              "P14.", "P15.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "k.", "alpha.", 
+                                                "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                                "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                                "P12.", "P13.", "P14.", "P15.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "k.", "alpha.", 
+                                                "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                                "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                                "P12.", "P13.", "P14.", "P15.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "k.", "alpha.", "beta.", "P1.", 
+                                              "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                              "P8.", "P9.", "P10.", "P11.", "P12.", "P13.", 
+                                              "P14.", "P15.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                             fleet.name[1], sep = ""), paste("psi2.", 
+                                                                                                                                             fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 16 & p[2] == 16) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 42) {
+            stop("For a 2-fleet 16P 16P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 42 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 41) {
+            stop("For a 2-fleet 16P 16P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 41 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 40) {
+            stop("For a 2-fleet 16P 16P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 40")
+          }
+        }
+        if (length(dates) != 34) {
+          stop("For a 2-Fleet 16P 16P model 'dates' must be a vector of length 34")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P9F1", "ts.P10F1", "ts.P11F1", "ts.P12F1", 
+                                          "ts.P13F1", "ts.P14F1", "ts.P15F1", "ts.P16F1", 
+                                          "ts.P1F2", "ts.P2F2", "ts.P3F2", "ts.P4F2", 
+                                          "ts.P5F2", "ts.P6F2", "ts.P7F2", "ts.P8F2", 
+                                          "ts.P9F2", "ts.P10F2", "ts.P11F2", "ts.P12F2", 
+                                          "ts.P13F2", "ts.P14F2", "ts.P15F2", "ts.P16F2", 
+                                          "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "k.", "alpha.", "beta.", 
+                                              "P1.", "P2.", "P3.", "P4.", "P5.", "P6.", 
+                                              "P7.", "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                              "P13.", "P14.", "P15.", "P16.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "k.", 
+                                                "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                                "P4.", "P5.", "P6.", "P7.", "P8.", "P9.", 
+                                                "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                                "P15.", "P16.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi2.", 
+                                                                                                               fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "k.", 
+                                                "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                                "P4.", "P5.", "P6.", "P7.", "P8.", "P9.", 
+                                                "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                                "P15.", "P16.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                               fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "k.", "alpha.", "beta.", 
+                                              "P1.", "P2.", "P3.", "P4.", "P5.", "P6.", 
+                                              "P7.", "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                              "P13.", "P14.", "P15.", "P16.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                           paste("psi1.", fleet.name[1], sep = ""), 
+                           paste("psi2.", fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 17 & p[2] == 17) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 44) {
+            stop("For a 2-fleet 17P 17P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 44 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 43) {
+            stop("For a 2-fleet 17P 17P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 43 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 42) {
+            stop("For a 2-fleet 17P 17P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 42")
+          }
+        }
+        if (length(dates) != 36) {
+          stop("For a 2-Fleet 17P 17P model 'dates' must be a vector of length 36")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P9F1", "ts.P10F1", "ts.P11F1", "ts.P12F1", 
+                                          "ts.P13F1", "ts.P14F1", "ts.P15F1", "ts.P16F1", 
+                                          "ts.P17F1", "ts.P1F2", "ts.P2F2", "ts.P3F2", 
+                                          "ts.P4F2", "ts.P5F2", "ts.P6F2", "ts.P7F2", 
+                                          "ts.P8F2", "ts.P9F2", "ts.P10F2", "ts.P11F2", 
+                                          "ts.P12F2", "ts.P13F2", "ts.P14F2", "ts.P15F2", 
+                                          "ts.P16F2", "ts.P17F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                              "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                              "P12.", "P13.", "P14.", "P15.", "P16.", 
+                                              "P17.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                      3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                                "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                                "P9.", "P10.", "P11.", "P12.", "P13.", 
+                                                "P14.", "P15.", "P16.", "P17.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                                "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                                "P9.", "P10.", "P11.", "P12.", "P13.", 
+                                                "P14.", "P15.", "P16.", "P17.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                              "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                              "P12.", "P13.", "P14.", "P15.", "P16.", 
+                                              "P17.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                      3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 18 & p[2] == 18) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 46) {
+            stop("For a 2-fleet 18P 18P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 46 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 45) {
+            stop("For a 2-fleet 18P 18P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 45 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 44) {
+            stop("For a 2-fleet 18P 18P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 44")
+          }
+        }
+        if (length(dates) != 38) {
+          stop("For a 2-Fleet 18P 18P model 'dates' must be a vector of length 38")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P9F1", "ts.P10F1", "ts.P11F1", "ts.P12F1", 
+                                          "ts.P13F1", "ts.P14F1", "ts.P15F1", "ts.P16F1", 
+                                          "ts.P17F1", "ts.P18F1", "ts.P1F2", "ts.P2F2", 
+                                          "ts.P3F2", "ts.P4F2", "ts.P5F2", "ts.P6F2", 
+                                          "ts.P7F2", "ts.P8F2", "ts.P9F2", "ts.P10F2", 
+                                          "ts.P11F2", "ts.P12F2", "ts.P13F2", "ts.P14F2", 
+                                          "ts.P15F2", "ts.P16F2", "ts.P17F2", "ts.P18F2", 
+                                          "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                              "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                              "P12.", "P13.", "P14.", "P15.", "P16.", 
+                                              "P17.", "P18.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "k.", "alpha.", "beta.", "P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                        3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "k.", "alpha.", "beta.", "P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                        3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                              "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                              "P12.", "P13.", "P14.", "P15.", "P16.", 
+                                              "P17.", "P18.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                             fleet.name[1], sep = ""), paste("psi2.", 
+                                                                                                                                             fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 19 & p[2] == 19) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 48) {
+            stop("For a 2-fleet 19P 19P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 48 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 47) {
+            stop("For a 2-fleet 19P 19P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 47 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 46) {
+            stop("For a 2-fleet 19P 19P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 46")
+          }
+        }
+        if (length(dates) != 40) {
+          stop("For a 2-Fleet 19P 19P model 'dates' must be a vector of length 40")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P9F1", "ts.P10F1", "ts.P11F1", "ts.P12F1", 
+                                          "ts.P13F1", "ts.P14F1", "ts.P15F1", "ts.P16F1", 
+                                          "ts.P17F1", "ts.P18F1", "ts.P19F1", "ts.P1F2", 
+                                          "ts.P2F2", "ts.P3F2", "ts.P4F2", "ts.P5F2", 
+                                          "ts.P6F2", "ts.P7F2", "ts.P8F2", "ts.P9F2", 
+                                          "ts.P10F2", "ts.P11F2", "ts.P12F2", "ts.P13F2", 
+                                          "ts.P14F2", "ts.P15F2", "ts.P16F2", "ts.P17F2", 
+                                          "ts.P18F2", "ts.P19F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "k.", "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "P5.", "P6.", "P7.", "P8.", "P9.", 
+                                              "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                              3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "P4.", "P5.", "P6.", 
+                                                "P7.", "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi2.", 
+                                                                                                               fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "P4.", "P5.", "P6.", 
+                                                "P7.", "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                               fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "k.", "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "P5.", "P6.", "P7.", "P8.", "P9.", 
+                                              "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                              3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 20 & p[2] == 20) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 50) {
+            stop("For a 2-fleet 20P 20P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 50 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 49) {
+            stop("For a 2-fleet 20P 20P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 49 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 48) {
+            stop("For a 2-fleet 20P 20P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 48")
+          }
+        }
+        if (length(dates) != 42) {
+          stop("For a 2-Fleet 20P 20P model 'dates' must be a vector of length 42")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P9F1", "ts.P10F1", "ts.P11F1", "ts.P12F1", 
+                                          "ts.P13F1", "ts.P14F1", "ts.P15F1", "ts.P16F1", 
+                                          "ts.P17F1", "ts.P18F1", "ts.P19F1", "ts.P20F1", 
+                                          "ts.P1F2", "ts.P2F2", "ts.P3F2", "ts.P4F2", 
+                                          "ts.P5F2", "ts.P6F2", "ts.P7F2", "ts.P8F2", 
+                                          "ts.P9F2", "ts.P10F2", "ts.P11F2", "ts.P12F2", 
+                                          "ts.P13F2", "ts.P14F2", "ts.P15F2", "ts.P16F2", 
+                                          "ts.P17F2", "ts.P18F2", "ts.P19F2", "ts.P20F2", 
+                                          "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "k.", "alpha.", "beta.", "P1.", 
+                                              "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                              "P8.", "P9.", "P10.", "P11.", "P12.", "P13.", 
+                                              "P14.", "P15.", "P16.", "P17.", "P18.", 
+                                              "P19.", "P20.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "P20.", "k.", "alpha.", 
+                                                "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                                "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                                "P12.", "P13.", "P14.", "P15.", "P16.", 
+                                                "P17.", "P18.", "P19.", "P20.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "P20.", "k.", "alpha.", 
+                                                "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                                "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                                "P12.", "P13.", "P14.", "P15.", "P16.", 
+                                                "P17.", "P18.", "P19.", "P20.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "k.", "alpha.", "beta.", "P1.", 
+                                              "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                              "P8.", "P9.", "P10.", "P11.", "P12.", "P13.", 
+                                              "P14.", "P15.", "P16.", "P17.", "P18.", 
+                                              "P19.", "P20.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                             fleet.name[1], sep = ""), paste("psi2.", 
+                                                                                                                                             fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48), ~exp(x49)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 21 & p[2] == 21) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 52) {
+            stop("For a 2-fleet 21P 21P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 52 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 51) {
+            stop("For a 2-fleet 21P 21P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 51 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 50) {
+            stop("For a 2-fleet 21P 21P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 50")
+          }
+        }
+        if (length(dates) != 44) {
+          stop("For a 2-Fleet 21P 21P model 'dates' must be a vector of length 44")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P9F1", "ts.P10F1", "ts.P11F1", "ts.P12F1", 
+                                          "ts.P13F1", "ts.P14F1", "ts.P15F1", "ts.P16F1", 
+                                          "ts.P17F1", "ts.P18F1", "ts.P19F1", "ts.P20F1", 
+                                          "ts.P21F1", "ts.P1F2", "ts.P2F2", "ts.P3F2", 
+                                          "ts.P4F2", "ts.P5F2", "ts.P6F2", "ts.P7F2", 
+                                          "ts.P8F2", "ts.P9F2", "ts.P10F2", "ts.P11F2", 
+                                          "ts.P12F2", "ts.P13F2", "ts.P14F2", "ts.P15F2", 
+                                          "ts.P16F2", "ts.P17F2", "ts.P18F2", "ts.P19F2", 
+                                          "ts.P20F2", "ts.P21F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "P21.", "k.", "alpha.", "beta.", 
+                                              "P1.", "P2.", "P3.", "P4.", "P5.", "P6.", 
+                                              "P7.", "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                              "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                              "P18.", "P19.", "P20.", "P21.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "P20.", "P21.", "k.", 
+                                                "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                                "P4.", "P5.", "P6.", "P7.", "P8.", "P9.", 
+                                                "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                                "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                                "P20.", "P21.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi2.", 
+                                                                                                               fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "P20.", "P21.", "k.", 
+                                                "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                                "P4.", "P5.", "P6.", "P7.", "P8.", "P9.", 
+                                                "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                                "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                                "P20.", "P21.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                               fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "P21.", "k.", "alpha.", "beta.", 
+                                              "P1.", "P2.", "P3.", "P4.", "P5.", "P6.", 
+                                              "P7.", "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                              "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                              "P18.", "P19.", "P20.", "P21.", "k.", "alpha.", 
+                                              "beta."), c(rep(fleet.name[1], 3 + p[1]), 
+                                                          rep(fleet.name[2], 3 + p[2])), sep = ""), 
+                           paste("psi1.", fleet.name[1], sep = ""), 
+                           paste("psi2.", fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                        ~exp(x51)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                        ~exp(x51), ~exp(x52)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 22 & p[2] == 22) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 54) {
+            stop("For a 2-fleet 22P 22P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 54 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 53) {
+            stop("For a 2-fleet 22P 22P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 53 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 52) {
+            stop("For a 2-fleet 22P 22P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 52")
+          }
+        }
+        if (length(dates) != 46) {
+          stop("For a 2-Fleet 22P 22P model 'dates' must be a vector of length 46")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P9F1", "ts.P10F1", "ts.P11F1", "ts.P12F1", 
+                                          "ts.P13F1", "ts.P14F1", "ts.P15F1", "ts.P16F1", 
+                                          "ts.P17F1", "ts.P18F1", "ts.P19F1", "ts.P20F1", 
+                                          "ts.P21F1", "ts.P22F1", "ts.P1F2", "ts.P2F2", 
+                                          "ts.P3F2", "ts.P4F2", "ts.P5F2", "ts.P6F2", 
+                                          "ts.P7F2", "ts.P8F2", "ts.P9F2", "ts.P10F2", 
+                                          "ts.P11F2", "ts.P12F2", "ts.P13F2", "ts.P14F2", 
+                                          "ts.P15F2", "ts.P16F2", "ts.P17F2", "ts.P18F2", 
+                                          "ts.P19F2", "ts.P20F2", "ts.P21F2", "ts.P22F2", 
+                                          "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "P21.", "P22.", "k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                              "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                              "P12.", "P13.", "P14.", "P15.", "P16.", 
+                                              "P17.", "P18.", "P19.", "P20.", "P21.", 
+                                              "P22.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                      3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "P20.", "P21.", "P22.", 
+                                                "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                                "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                                "P9.", "P10.", "P11.", "P12.", "P13.", 
+                                                "P14.", "P15.", "P16.", "P17.", "P18.", 
+                                                "P19.", "P20.", "P21.", "P22.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "P20.", "P21.", "P22.", 
+                                                "k.", "alpha.", "beta.", "P1.", "P2.", 
+                                                "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                                "P9.", "P10.", "P11.", "P12.", "P13.", 
+                                                "P14.", "P15.", "P16.", "P17.", "P18.", 
+                                                "P19.", "P20.", "P21.", "P22.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "P21.", "P22.", "k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                              "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                              "P12.", "P13.", "P14.", "P15.", "P16.", 
+                                              "P17.", "P18.", "P19.", "P20.", "P21.", 
+                                              "P22.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                      3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                        ~exp(x51), ~exp(x52)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                        ~exp(x51), ~exp(x52), ~exp(x53)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                        ~exp(x51), ~exp(x52), ~exp(x53), ~exp(x54)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 23 & p[2] == 23) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 56) {
+            stop("For a 2-fleet 23P 23P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 56 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 55) {
+            stop("For a 2-fleet 23P 23P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 55 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 54) {
+            stop("For a 2-fleet 23P 23P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 54")
+          }
+        }
+        if (length(dates) != 48) {
+          stop("For a 2-Fleet 23P 23P model 'dates' must be a vector of length 48")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P9F1", "ts.P10F1", "ts.P11F1", "ts.P12F1", 
+                                          "ts.P13F1", "ts.P14F1", "ts.P15F1", "ts.P16F1", 
+                                          "ts.P17F1", "ts.P18F1", "ts.P19F1", "ts.P20F1", 
+                                          "ts.P21F1", "ts.P22F1", "ts.P23F1", "ts.P1F2", 
+                                          "ts.P2F2", "ts.P3F2", "ts.P4F2", "ts.P5F2", 
+                                          "ts.P6F2", "ts.P7F2", "ts.P8F2", "ts.P9F2", 
+                                          "ts.P10F2", "ts.P11F2", "ts.P12F2", "ts.P13F2", 
+                                          "ts.P14F2", "ts.P15F2", "ts.P16F2", "ts.P17F2", 
+                                          "ts.P18F2", "ts.P19F2", "ts.P20F2", "ts.P21F2", 
+                                          "ts.P22F2", "ts.P23F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "P21.", "P22.", "P23.", "k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                              "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                              "P12.", "P13.", "P14.", "P15.", "P16.", 
+                                              "P17.", "P18.", "P19.", "P20.", "P21.", 
+                                              "P22.", "P23.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "P20.", "P21.", "P22.", 
+                                                "P23.", "k.", "alpha.", "beta.", "P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "P20.", "P21.", "P22.", 
+                                                "P23.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                        3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "P20.", "P21.", "P22.", 
+                                                "P23.", "k.", "alpha.", "beta.", "P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "P20.", "P21.", "P22.", 
+                                                "P23.", "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                                        3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "P21.", "P22.", "P23.", "k.", "alpha.", 
+                                              "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                              "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                              "P12.", "P13.", "P14.", "P15.", "P16.", 
+                                              "P17.", "P18.", "P19.", "P20.", "P21.", 
+                                              "P22.", "P23.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                             fleet.name[1], sep = ""), paste("psi2.", 
+                                                                                                                                             fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                        ~exp(x51), ~exp(x52), ~exp(x53), ~exp(x54)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                        ~exp(x51), ~exp(x52), ~exp(x53), ~exp(x54), 
+                                        ~exp(x55)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                        ~exp(x51), ~exp(x52), ~exp(x53), ~exp(x54), 
+                                        ~exp(x55), ~exp(x56)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 24 & p[2] == 24) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 58) {
+            stop("For a 2-fleet 24P 24P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 58 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 57) {
+            stop("For a 2-fleet 24P 24P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 57 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 56) {
+            stop("For a 2-fleet 24P 24P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 56")
+          }
+        }
+        if (length(dates) != 50) {
+          stop("For a 2-Fleet 24P 24P model 'dates' must be a vector of length 50")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P9F1", "ts.P10F1", "ts.P11F1", "ts.P12F1", 
+                                          "ts.P13F1", "ts.P14F1", "ts.P15F1", "ts.P16F1", 
+                                          "ts.P17F1", "ts.P18F1", "ts.P19F1", "ts.P20F1", 
+                                          "ts.P21F1", "ts.P22F1", "ts.P23F1", "ts.P24F1", 
+                                          "ts.P1F2", "ts.P2F2", "ts.P3F2", "ts.P4F2", 
+                                          "ts.P5F2", "ts.P6F2", "ts.P7F2", "ts.P8F2", 
+                                          "ts.P9F2", "ts.P10F2", "ts.P11F2", "ts.P12F2", 
+                                          "ts.P13F2", "ts.P14F2", "ts.P15F2", "ts.P16F2", 
+                                          "ts.P17F2", "ts.P18F2", "ts.P19F2", "ts.P20F2", 
+                                          "ts.P21F2", "ts.P22F2", "ts.P23F2", "ts.P24F2", 
+                                          "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "P21.", "P22.", "P23.", "P24.", 
+                                              "k.", "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "P5.", "P6.", "P7.", "P8.", "P9.", 
+                                              "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "P21.", "P22.", "P23.", "P24.", 
+                                              "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                              3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "P20.", "P21.", "P22.", 
+                                                "P23.", "P24.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "P4.", "P5.", "P6.", 
+                                                "P7.", "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "P20.", "P21.", "P22.", 
+                                                "P23.", "P24.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi2.", 
+                                                                                                               fleet.name[2], sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "P20.", "P21.", "P22.", 
+                                                "P23.", "P24.", "k.", "alpha.", "beta.", 
+                                                "P1.", "P2.", "P3.", "P4.", "P5.", "P6.", 
+                                                "P7.", "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "P20.", "P21.", "P22.", 
+                                                "P23.", "P24.", "k.", "alpha.", "beta."), 
+                                              c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                  3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                               fleet.name[1], sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "P21.", "P22.", "P23.", "P24.", 
+                                              "k.", "alpha.", "beta.", "P1.", "P2.", "P3.", 
+                                              "P4.", "P5.", "P6.", "P7.", "P8.", "P9.", 
+                                              "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "P21.", "P22.", "P23.", "P24.", 
+                                              "k.", "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                              3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                            sep = ""), paste("psi1.", fleet.name[1], 
+                                                             sep = ""), paste("psi2.", fleet.name[2], 
+                                                                              sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                        ~exp(x51), ~exp(x52), ~exp(x53), ~exp(x54), 
+                                        ~exp(x55), ~exp(x56)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                        ~exp(x51), ~exp(x52), ~exp(x53), ~exp(x54), 
+                                        ~exp(x55), ~exp(x56), ~exp(x57)), mean = as.numeric(results1[i, 
+                                                                                                     1:length(par)]), cov = try(solve(temp[i, 
+                                                                                                     ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                        ~exp(x51), ~exp(x52), ~exp(x53), ~exp(x54), 
+                                        ~exp(x55), ~exp(x56), ~exp(x57), ~exp(x58)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else if (p[1] == 25 & p[2] == 25) {
+        if (sum(distr %in% sdistr.set) == 0) {
+          if (length(par) != 60) {
+            stop("For a 2-fleet 25P 25P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for both fleets, par must be a vector of length 60 \n Put initial values for dispersion parameters for fleet 1 and fleet 2 in the last two positions of the parameter vector, in their obvious order")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 1) {
+          if (length(par) != 59) {
+            stop("For a 2-fleet 25P 25P model with either negative binomial, normal, lognormal, gamma, robust lognormal or gumbel distribution for one of the fleets, par must be a vector of length 59 \n Put initial value for dispersion parameter of that fleet in the last position of the parameter vector")
+          }
+        }
+        if (sum(distr %in% sdistr.set) == 2) {
+          if (length(par) != 58) {
+            stop("For a 2-fleet 25P 25P model with either poisson, apnormal, or aplnormal distribution for both fleets, par must be a vector of length 58")
+          }
+        }
+        if (length(dates) != 52) {
+          stop("For a 2-Fleet 25P 25P model 'dates' must be a vector of length 52")
+        }
+        results1 <- do.call(optimx, list(par = par, fn = eval(as.name(paste(".CDMN", 
+                                                                            as.character(p[1]), "P", as.character(p[2]), 
+                                                                            "P", sep = ""))), gr = NULL, dates = dates, 
+                                         obseff1 = x$Data[[fleet.name[1]]][, 2], obscat1 = x$Data[[fleet.name[1]]][, 
+                                                                                                                   5], obseff2 = x$Data[[fleet.name[2]]][, 2], 
+                                         obscat2 = x$Data[[fleet.name[2]]][, 5], distr = distr, 
+                                         method = method, lower = -Inf, upper = Inf, 
+                                         control = list(), hessian = hessian, itnmax = itnmax, 
+                                         output = "estimate"))
+        results2 <- vector("list", length(method))
+        names(results2) <- method
+        temp <- attr(results1, "details")
+        for (i in 1:length(method)) {
+          results2[[i]]$Type <- p
+          results2[[i]]$Dates <- dates
+          results2[[i]]$Distr <- distr
+          names(results2[[i]]$Dates) <- c("ts.start", 
+                                          "ts.P1F1", "ts.P2F1", "ts.P3F1", "ts.P4F1", 
+                                          "ts.P5F1", "ts.P6F1", "ts.P7F1", "ts.P8F1", 
+                                          "ts.P9F1", "ts.P10F1", "ts.P11F1", "ts.P12F1", 
+                                          "ts.P13F1", "ts.P14F1", "ts.P15F1", "ts.P16F1", 
+                                          "ts.P17F1", "ts.P18F1", "ts.P19F1", "ts.P20F1", 
+                                          "ts.P21F1", "ts.P22F1", "ts.P23F1", "ts.P24F1", 
+                                          "ts.P25F1", "ts.P1F2", "ts.P2F2", "ts.P3F2", 
+                                          "ts.P4F2", "ts.P5F2", "ts.P6F2", "ts.P7F2", 
+                                          "ts.P8F2", "ts.P9F2", "ts.P10F2", "ts.P11F2", 
+                                          "ts.P12F2", "ts.P13F2", "ts.P14F2", "ts.P15F2", 
+                                          "ts.P16F2", "ts.P17F2", "ts.P18F2", "ts.P19F2", 
+                                          "ts.P20F2", "ts.P21F2", "ts.P22F2", "ts.P23F2", 
+                                          "ts.P24F2", "ts.P25F2", "ts.end")
+          if (sum(distr %in% sdistr.set) == 2) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "P21.", "P22.", "P23.", "P24.", 
+                                              "P25.", "k.", "alpha.", "beta.", "P1.", 
+                                              "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                              "P8.", "P9.", "P10.", "P11.", "P12.", "P13.", 
+                                              "P14.", "P15.", "P16.", "P17.", "P18.", 
+                                              "P19.", "P20.", "P21.", "P22.", "P23.", 
+                                              "P24.", "P25.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""))
+          }
+          if (sum(distr %in% sdistr.set) == 1) {
+            if (distr[1] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "P20.", "P21.", "P22.", 
+                                                "P23.", "P24.", "P25.", "k.", "alpha.", 
+                                                "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                                "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                                "P12.", "P13.", "P14.", "P15.", "P16.", 
+                                                "P17.", "P18.", "P19.", "P20.", "P21.", 
+                                                "P22.", "P23.", "P24.", "P25.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi2.", fleet.name[2], 
+                                                               sep = ""))
+            }
+            if (distr[2] %in% sdistr.set) {
+              par.names <- c("M", "N0", paste(c("P1.", 
+                                                "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                                "P8.", "P9.", "P10.", "P11.", "P12.", 
+                                                "P13.", "P14.", "P15.", "P16.", "P17.", 
+                                                "P18.", "P19.", "P20.", "P21.", "P22.", 
+                                                "P23.", "P24.", "P25.", "k.", "alpha.", 
+                                                "beta.", "P1.", "P2.", "P3.", "P4.", "P5.", 
+                                                "P6.", "P7.", "P8.", "P9.", "P10.", "P11.", 
+                                                "P12.", "P13.", "P14.", "P15.", "P16.", 
+                                                "P17.", "P18.", "P19.", "P20.", "P21.", 
+                                                "P22.", "P23.", "P24.", "P25.", "k.", 
+                                                "alpha.", "beta."), c(rep(fleet.name[1], 
+                                                                          3 + p[1]), rep(fleet.name[2], 3 + p[2])), 
+                                              sep = ""), paste("psi1.", fleet.name[1], 
+                                                               sep = ""))
+            }
+          }
+          if (sum(distr %in% sdistr.set) == 0) {
+            par.names <- c("M", "N0", paste(c("P1.", "P2.", 
+                                              "P3.", "P4.", "P5.", "P6.", "P7.", "P8.", 
+                                              "P9.", "P10.", "P11.", "P12.", "P13.", "P14.", 
+                                              "P15.", "P16.", "P17.", "P18.", "P19.", 
+                                              "P20.", "P21.", "P22.", "P23.", "P24.", 
+                                              "P25.", "k.", "alpha.", "beta.", "P1.", 
+                                              "P2.", "P3.", "P4.", "P5.", "P6.", "P7.", 
+                                              "P8.", "P9.", "P10.", "P11.", "P12.", "P13.", 
+                                              "P14.", "P15.", "P16.", "P17.", "P18.", 
+                                              "P19.", "P20.", "P21.", "P22.", "P23.", 
+                                              "P24.", "P25.", "k.", "alpha.", "beta."), 
+                                            c(rep(fleet.name[1], 3 + p[1]), rep(fleet.name[2], 
+                                                                                3 + p[2])), sep = ""), paste("psi1.", 
+                                                                                                             fleet.name[1], sep = ""), paste("psi2.", 
+                                                                                                                                             fleet.name[2], sep = ""))
+          }
+          if (length(temp[i, ]$ngatend) < length(par.names) || 
+              any(is.na(temp[i, ]$nhatend)) || 1/kappa(temp[i, 
+              ]$nhatend) < 1e-15) {
+            results2[[i]]$converg <- "FAIL"
+            results2[[i]]$kkt <- NA
+            results2[[i]]$AIC <- NA
+            results2[[i]]$bt.par <- NA
+            results2[[i]]$num.grads <- NA
+            results2[[i]]$bt.stdev <- rep(NA, length(par.names))
+            results2[[i]]$Cor <- matrix(NA, length(par.names), 
+                                        length(par.names))
+          }
+          else {
+            results2[[i]]$converg <- results1[i, length(par) + 
+                                                5]
+            results2[[i]]$kkt <- results1[i, (length(par) + 
+                                                6):(length(par) + 7)]
+            results2[[i]]$AIC <- 2 * length(par) + 2 * 
+              results1[i, length(par) + 1]
+            results2[[i]]$bt.par <- exp(results1[i, 1:length(par)])
+            results2[[i]]$num.grads <- temp[i, ]$ngatend
+            v <- matrix(0, length(par), length(par))
+            if (sum(distr %in% sdistr.set) == 2) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                        ~exp(x51), ~exp(x52), ~exp(x53), ~exp(x54), 
+                                        ~exp(x55), ~exp(x56), ~exp(x57), ~exp(x58)), 
+                               mean = as.numeric(results1[i, 1:length(par)]), 
+                               cov = try(solve(temp[i, ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 1) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                        ~exp(x51), ~exp(x52), ~exp(x53), ~exp(x54), 
+                                        ~exp(x55), ~exp(x56), ~exp(x57), ~exp(x58), 
+                                        ~exp(x59)), mean = as.numeric(results1[i, 
+                                                                               1:length(par)]), cov = try(solve(temp[i, 
+                                                                               ]$nhatend)), ses = FALSE)
+            }
+            if (sum(distr %in% sdistr.set) == 0) {
+              v <- deltamethod(g = list(~exp(x1), ~exp(x2), 
+                                        ~exp(x3), ~exp(x4), ~exp(x5), ~exp(x6), 
+                                        ~exp(x7), ~exp(x8), ~exp(x9), ~exp(x10), 
+                                        ~exp(x11), ~exp(x12), ~exp(x13), ~exp(x14), 
+                                        ~exp(x15), ~exp(x16), ~exp(x17), ~exp(x18), 
+                                        ~exp(x19), ~exp(x20), ~exp(x21), ~exp(x22), 
+                                        ~exp(x23), ~exp(x24), ~exp(x25), ~exp(x26), 
+                                        ~exp(x27), ~exp(x28), ~exp(x29), ~exp(x30), 
+                                        ~exp(x31), ~exp(x32), ~exp(x33), ~exp(x34), 
+                                        ~exp(x35), ~exp(x36), ~exp(x37), ~exp(x38), 
+                                        ~exp(x39), ~exp(x40), ~exp(x41), ~exp(x42), 
+                                        ~exp(x43), ~exp(x44), ~exp(x45), ~exp(x46), 
+                                        ~exp(x47), ~exp(x48), ~exp(x49), ~exp(x50), 
+                                        ~exp(x51), ~exp(x52), ~exp(x53), ~exp(x54), 
+                                        ~exp(x55), ~exp(x56), ~exp(x57), ~exp(x58), 
+                                        ~exp(x59), ~exp(x60)), mean = as.numeric(results1[i, 
+                                                                                          1:length(par)]), cov = try(solve(temp[i, 
+                                                                                          ]$nhatend)), ses = FALSE)
+            }
+            results2[[i]]$bt.stdev <- sqrt(diag(v))
+            results2[[i]]$Cor <- cor(v)
+            names(results2[[i]]$num.grads) <- par.names
+            names(results2[[i]]$bt.par) <- par.names
+            names(results2[[i]]$bt.stdev) <- par.names
+            colnames(results2[[i]]$Cor) <- par.names
+            rownames(results2[[i]]$Cor) <- par.names
+          }
+        }
+        rm(v)
+        rm(temp)
+      }
+      else {
+        stop("The perturbations parameter vector p does not correspond with any of the allowed models for 2 fleets")
+      }
+    }
+    results <- vector("list", 3)
+    names(results) <- c("Data", "Initial", "Model")
+    results$Data <- x
+    results$Initial <- exp(par)
+    names(results$Initial) <- par.names
+    results$Model <- results2
+    class(results) <- "catdyn"
+    return(results)
+  }
+unlockBinding("CatDynFit", as.environment("package:CatDyn"))
+environment(CatDynFit_2) <- asNamespace('CatDyn')
+assignInNamespace("CatDynFit", CatDynFit_2, ns = "CatDyn")
+lockBinding("CatDynFit", as.environment("package:CatDyn"))
