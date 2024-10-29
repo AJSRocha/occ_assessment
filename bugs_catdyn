@@ -1,0 +1,6 @@
+
+# CatDynBSD:
+grepl() command is triggered by fleets whose name contains the letter 'P', causing a mismatch in the length of the selected parameters and a failure to execute the function.
+
+# CatDynFit:
+Issues regarding the chunks were the condition p==18 and p==.18 is evaluated: The x$Data[[Fleet]][5] index is changed to x$Data[[Fleet]][3] only these chunks, causing catches in kg to be used instead of catches in numbers, which can lead to wrong results or, in my case, failure of convergence. Also, the command 'names(results2) <- method' is missing, which prevents the resulting object of the fitting function to be used by CatDynPred().

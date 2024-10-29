@@ -1757,6 +1757,7 @@ CatDynFit_2 =
                                          control = list(), hessian = hessian, itnmax = itnmax, 
                                          output = "estimate"))
         results2 <- vector("list", length(method))
+        names(results2) <- method
         temp <- attr(results1, "details")
         for (i in 1:length(method)) {
           results2[[i]]$Type <- p
@@ -5303,6 +5304,7 @@ CatDynFit_2 =
                                          control = list(), hessian = hessian, itnmax = itnmax, 
                                          partial = partial, output = "estimate"))
         results2 <- vector("list", length(method))
+        names(results2) <- method
         temp <- attr(results1, "details")
         for (i in 1:length(method)) {
           results2[[i]]$Type <- p

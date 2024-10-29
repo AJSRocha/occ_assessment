@@ -8,12 +8,13 @@ set.seed(123)
 
 # Funcoes catdyn
 source('.scripts/custom_catdyn_fit.R')
+source('.scripts/custom_catdyn_bsd.R')
 source('.scripts/funcoes_catdyn.R')
 
 # Sintese das vendas
 # load("C:/repos/occ_assessment/.data/initial_data_occ_sumario_otb.Rdata")
 # 
-# # Sintetiza o dataframe e prepara para standardizacao 
+# # Sintetiza o dataframe e prepara para standardizacao
 # df_effort =
 #   vd %>%
 #   group_by(year_sale, month_sale, IEMBARCA, PORTO) %>%
@@ -24,8 +25,8 @@ source('.scripts/funcoes_catdyn.R')
 #             effort_i = n_distinct(IDATVEND[EGRUPART == 'MIS_MIS']),
 #             effort_i_otb = n_distinct(IDATVEND))
 # 
-# std_otb = 
-# df_effort %>% 
+# std_otb =
+# df_effort %>%
 #   transmute(year = year_sale,
 #             fishing.season = year_sale,
 #             month = month_sale,
@@ -35,8 +36,8 @@ source('.scripts/funcoes_catdyn.R')
 #             effort_i_otb = effort_i_otb,
 #             lpue = catch_i_otb/effort_i_otb)
 # 
-# std_mis = 
-#   df_effort %>% 
+# std_mis =
+#   df_effort %>%
 #   transmute(year = year_sale,
 #             fishing.season = year_sale,
 #             month = month_sale,
@@ -44,7 +45,7 @@ source('.scripts/funcoes_catdyn.R')
 #             power.class = Power.main,
 #             catch_i = catch_i,
 #             effort_i = effort_i,
-#             lpue = catch_i/effort_i) %>% 
+#             lpue = catch_i/effort_i) %>%
 #   mutate(lpue = case_when(is.nan(lpue) ~ 0,
 #                           T ~ lpue))
 # 
@@ -52,23 +53,23 @@ source('.scripts/funcoes_catdyn.R')
 # std_mis_temp = custom_delta_glm(std_mis)
 # 
 # 
-# df_nominal = df_effort %>% 
+# df_nominal = df_effort %>%
 #   mutate(Power.main = as.character(Power.main)) %>%
 #   left_join(.,
 #             std_otb_temp$predicted.lpue,
 #             by = c('month_sale' = 'month',
 #                    'year_sale' = 'fishing.season',
 #                    'Power.main' = 'power.class',
-#                    'PORTO' = 'rectangle')) %>% 
-#   rename(st.lpue_otb = st.lpue) %>% 
+#                    'PORTO' = 'rectangle')) %>%
+#   rename(st.lpue_otb = st.lpue) %>%
 #   left_join(.,
 #             std_mis_temp$predicted.lpue,
 #             by = c('month_sale' = 'month',
 #                    'year_sale' = 'fishing.season',
 #                    'Power.main' = 'power.class',
-#                    'PORTO' = 'rectangle')) 
+#                    'PORTO' = 'rectangle'))
 # 
-# df_effort = df_effort %>% 
+# df_effort = df_effort %>%
 #   group_by(year_sale, month_sale) %>%
 #   summarise(catch = sum(catch_i, na.rm =T),
 #             effort = sum(effort_i, na.rm =T),
@@ -76,7 +77,7 @@ source('.scripts/funcoes_catdyn.R')
 #             effort_otb = sum(effort_i_otb, na.rm =T))
 # 
 # 
-# save(std_mis_temp, 
+# save(std_mis_temp,
 #      std_otb_temp,
 #      df_nominal,
 #      df_effort,
@@ -145,8 +146,120 @@ load('.data/df_effort_m_otb.Rdata')
 load('.data/df_effort_m_mbw_otb.Rdata')
 
 
+# Correcçao devido a defeso imposto em 2005 Com a Portaria nº 635/2005, de 2 de agosto,
+#  Proibição da captura, manutenção a bordo, desembarque e comercialização de polvo- vulgar,
+# com todas as artes entre 1 e 30 de Setembro de 2005
+
+mod_aux = lm(df_effort$catch ~ df_effort$effort)
+
+ggplot() + 
+  geom_point(aes(x = df_effort$effort,
+                 y = df_effort$catch)) +
+  geom_abline(slope = mod_aux$coefficients[2], intercept = mod_aux$coefficients[1])
+
+
+
+df_effort = 
+  df_effort %>% 
+  mutate(catch = case_when(year_sale == 2005 & month_sale == '09' ~ 
+                              effort * mod_aux$coefficients[2] +  mod_aux$coefficients[1],
+         T ~ catch),
+         catch_otb = case_when(year_sale == 2005 & month_sale == '09' ~ 
+                                  effort_otb * mod_aux$coefficients[2] + mod_aux$coefficients[1],
+                            T ~ catch_otb))
 
 # Começando com frota completa (mis + otb)
+
+## 1995 - 2005
+cat_df_2 = as.CatDynData(x=df_effort %>% 
+                           filter(as.numeric(
+                             as.character(year_sale)) %in% c(1995:2005)),
+                         step="month",
+                         fleet.name="MIS+OTB-S",
+                         coleff=6,
+                         colcat=5,
+                         colmbw=9,
+                         unitseff="trips",
+                         unitscat="kg",
+                         unitsmbw="kg",
+                         nmult="thou",
+                         season.dates=c(as.Date("1995-01-01"),
+                                        # as.Date("1995-12-24")))
+                                        last_date_of_week(2005, 52)-1))
+
+
+
+# plot.CatDynData(cat_df_2,
+#                 mark = T,
+#                 offset = c(0,1,10),
+#                 hem = 'N')
+# 
+# cat_df_2$Data$`MIS+OTB-S` %>% 
+#   mutate(year = ((time.step -1) %/% 12),
+#          x2 = rep(1:12,length(year)/12)) %>% 
+#   ggplot() + 
+#   geom_line(aes(color = factor(year)),
+#             size = 1) + 
+#   aes(y = spikecat,
+#       x = x2) + 
+#   facet_wrap(year ~.) + 
+#   scale_color_manual(values = colorRampPalette(wes_palette('Zissou1'))(
+#     length(cat_df$Data$`MIS+OTB-S`$time.step)/12)) + 
+#   theme_bw() + 
+#   theme(legend.position = 'none')
+
+
+indice_manual_2 = 
+  list(
+    12,12,12,12, 
+    12,12,12,12,12,
+    12,10)
+# 10,11,12,
+# 12,12,10,11,12,
+# 11,12,10,12,11,
+# 12,12,12,12,10)
+
+for(i in 0:(length(indice_manual_2)-1)){
+  indice_manual_2[[i+1]] = 12*i + indice_manual_2[[i+1]]
+}
+
+unlist(indice_manual_2)
+
+
+fit_null_2 =
+  trialer(cat_df_2,
+          p = 11,
+          M = 0.01,
+          N0.ini = 60000, #millions, as in nmult
+          P = indice_manual_2,
+          P.ini  = list(
+            30000,
+            20000,20000,20000,
+            20000,20000,20000,40000,20000,
+            
+            20000,20000),
+          # 20000, 100000,20000,            #
+          # 20000, 20000, 20000, 50000,20000,       
+          # 20000, 20000, 20000, 20000, 20000,
+          # 20000, 20000,40000,20000,20000), #2 elementos porque sao 2 perturbacaoes
+          k.ini = 0.0005,
+          alpha.ini = 0.85,
+          beta.ini  = 0.85,
+          distr = 'aplnormal',
+          method = 'CG',
+          itnmax = 10000,
+          disp = list(100))
+
+
+fit_null_2$fit$Model$CG$AIC
+fit_null_2$fit$Model$CG$converg
+
+plotador(cat_df_2, fit_null_2, pre = F,
+         post1 = T,
+         post2 = T)
+
+## 2006 - 2023
+
 cat_df = as.CatDynData(x=df_effort %>% 
                          filter(as.numeric(
                            as.character(year_sale)) %in% c(2006:2023)),
@@ -171,22 +284,22 @@ plot.CatDynData(cat_df,
 
 #deteccao dos catch spikes
 
-detectados =
-cat_df$Data$`Polyvalent-S` %>% 
-  mutate(year = ((time.step -1) %/% 12)) %>% 
-  group_by(year) %>% 
-  summarise(recrutamento = which.max(spikecat)) %>% 
-  mutate(indice = (year)*12 + recrutamento)
-
-indice = list()
-for(i in 1:nrow(detectados)){
-  indice[[i]] = detectados$indice[i]
-}
+# detectados =
+# cat_df$Data$`Polyvalent-S` %>% 
+#   mutate(year = ((time.step -1) %/% 12)) %>% 
+#   group_by(year) %>% 
+#   summarise(recrutamento = which.max(spikecat)) %>% 
+#   mutate(indice = (year)*12 + recrutamento)
+# 
+# indice = list()
+# for(i in 1:nrow(detectados)){
+#   indice[[i]] = detectados$indice[i]
+# }
 
 indice_manual = 
   list(
     # 12,12,12,12,12,
-    #    12,10,    
+    # 12,10,
     10,11,12,
     12,12,10,11,12,
     11,12,10,12,11,
@@ -234,7 +347,7 @@ fit_null =
           P = indice_manual,
           P.ini  = list(
             # 20000,20000,20000,40000,20000,
-            #            20000,20000,
+            # 20000,20000,
             20000, 100000,20000,            #
             20000, 20000, 20000, 50000,20000,       
             20000, 20000, 20000, 20000, 20000,
@@ -258,6 +371,31 @@ plotador(cat_df, fit_null, pre = F,
 
 # Métricas para exportar
 
+# Biomassa anual
+# 
+
+fit_null_2$fit$Model$CG$bt.stdev[['beta.MIS+OTB-S']] = 0.05
+
+names(fit_null_2$fit$Model$CG)
+names(fit_null$fit$Model$CG)
+
+j = 12
+fit_null$fit$Model$CG[names(fit_null_2$fit$Model$CG)[j]]
+fit_null_2$fit$Model$CG[names(fit_null_2$fit$Model$CG)[j]]
+
+annual_biomass_05 =
+  CatDynBSD_2(fit_null_2$fit,
+            method = 'CG',
+            multi = T,
+            mbw.sd = predicos$se.fit)
+annual_biomass_23 =
+  CatDynBSD(fit_null$fit,
+            method = 'CG',
+            multi = T,
+            mbw.sd = predicos$se.fit)
+
+
+
 # Inclui spict
 
 ## Carrega spict aqui
@@ -266,9 +404,21 @@ load('.data/spict.Rdata')
 spict_biom = exp(res_spict$value[names(res_spict$value) == 'logBBmsy']) *
   exp(res_spict$value[names(res_spict$value) == 'logBmsy'])
 
-ggplot() + 
-  geom_point(aes(x = 1:300,
-                 y = spict_biom))
+res_spict$value[grepl('logB', names(res_spict$value))] %>% length()
+
+
+dev.off()
+
+
+plotspict.biomass(res_spict)
+plotspict.biomass(res_spict, plot.obs = F)
+
+spict_biomass = spict::get.par('logB', res_spict) %>% 
+  as.data.frame() %>% 
+  mutate(x = row.names(.) %>% as.numeric)
+
+spict_q = spict::get.par('logq', res_spict, exp = T, CI = 0.95)
+
 
 # Biomassa anual
 annual_biomass =

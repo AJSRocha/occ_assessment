@@ -1,6 +1,6 @@
 library(dplyr)
 
-for(i in c(1999:2023)){
+for(i in c(1995:2023)){
   load(paste0('C:/vendas-dia/vd_', i, '.RData'))
   assign(paste0('vd_', i),
          mget(ls(pattern = paste0('vd_*', i)))[[1]] %>%
@@ -30,6 +30,6 @@ vd = vd %>%
 vd = vd %>% 
   mutate(week = lubridate::week(IDATVEND))
 
-save(vd, file = 'data/initial_data_occ_sumario.Rdata')
+save(vd, file = '.data/initial_data_occ_sumario.Rdata')
 
-save(vd, file = 'data/initial_data_occ_sumario_otb.Rdata')
+save(vd, file = '.data/initial_data_occ_sumario_otb.Rdata')
