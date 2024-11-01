@@ -4,14 +4,14 @@ library(spict)
 
 head(df_nominal)
 
-df_nominal %>% 
-  mutate(x = paste(year_sale,
-                   month_sale,
-                   sep = '_')) %>% 
-  ggplot() + 
-  geom_boxplot(aes(x = x,
-                y = st.lpue)) + 
-  theme_bw()
+# df_nominal %>% 
+#   mutate(x = paste(year_sale,
+#                    month_sale,
+#                    sep = '_')) %>% 
+#   ggplot() + 
+#   geom_boxplot(aes(x = x,
+#                 y = st.lpue)) + 
+#   theme_bw()
 
 
 df_spict = df_nominal %>% 
@@ -26,8 +26,8 @@ df_spict = df_nominal %>%
                            month_sale,
                            sep = '_'))
 
-timeC = seq(1999,2023+11/12,1/12)
-timeI =seq(1999,2023+11/12,1/12)
+timeC = seq(1995,2023+11/12,1/12)
+timeI =seq(1995,2023+11/12,1/12)
 obsC = df_spict$catch_otb
 obsI = df_spict$lpue_otb
 
@@ -43,10 +43,14 @@ modelo_spict$ini$logn <- log(2) #adjust production curve to Shaefer
 modelo_spict$phases$logn <- -1
 modelo_spict$priors$logalpha <- c(1, 1, 0)
 modelo_spict$priors$logbeta <- c(1, 1, 0)
+modelo_spict$dtc = 1/12
+modelo_spict$dte = 1/12
+modelo_spict$catchunit = 'kg'
+modelo_spict$nseasons = 4
 
 res_spict = fit.spict(modelo_spict)
 retro_res = retro(res_spict)
-res_spict$inp$dteuler # 0.0625
+# res_spict$inp$dteuler = res_spict$inp$dteuler/2 
 
 save(df_spict, modelo_spict, res_spict,
      file = '.data/spict.Rdata')

@@ -3,7 +3,7 @@ library(CatDyn)
 library(ggplot2)
 library(Runuran)
 library(wesanderson)
-library(cuttlefish.model)
+# library(cuttlefish.model)
 set.seed(123)
 
 # Funcoes catdyn
@@ -173,7 +173,7 @@ df_effort =
 ## 1995 - 2005
 cat_df_2 = as.CatDynData(x=df_effort %>% 
                            filter(as.numeric(
-                             as.character(year_sale)) %in% c(1995:2005)),
+                             as.character(year_sale)) %in% c(1995:2009)),
                          step="month",
                          fleet.name="MIS+OTB-S",
                          coleff=6,
@@ -185,7 +185,7 @@ cat_df_2 = as.CatDynData(x=df_effort %>%
                          nmult="thou",
                          season.dates=c(as.Date("1995-01-01"),
                                         # as.Date("1995-12-24")))
-                                        last_date_of_week(2005, 52)-1))
+                                        last_date_of_week(2009, 52)-1))
 
 
 
@@ -213,9 +213,8 @@ indice_manual_2 =
   list(
     12,12,12,12, 
     12,12,12,12,12,
-    12,10)
-# 10,11,12,
-# 12,12,10,11,12,
+    12,10, 10,11,12,12)
+# 12,10,11,12,
 # 11,12,10,12,11,
 # 12,12,12,12,10)
 
@@ -228,7 +227,7 @@ unlist(indice_manual_2)
 
 fit_null_2 =
   trialer(cat_df_2,
-          p = 11,
+          p = 15,
           M = 0.01,
           N0.ini = 60000, #millions, as in nmult
           P = indice_manual_2,
@@ -237,12 +236,13 @@ fit_null_2 =
             20000,20000,20000,
             20000,20000,20000,40000,20000,
             
-            20000,20000),
-          # 20000, 100000,20000,            #
-          # 20000, 20000, 20000, 50000,20000,       
+            20000,20000,
+          20000, 100000,20000,            #
+          20000),
+          # 20000, 20000, 50000,20000,       
           # 20000, 20000, 20000, 20000, 20000,
           # 20000, 20000,40000,20000,20000), #2 elementos porque sao 2 perturbacaoes
-          k.ini = 0.0005,
+          k.ini = 0.00005,
           alpha.ini = 0.85,
           beta.ini  = 0.85,
           distr = 'aplnormal',
@@ -251,12 +251,63 @@ fit_null_2 =
           disp = list(100))
 
 
-fit_null_2$fit$Model$CG$AIC
-fit_null_2$fit$Model$CG$converg
+distribuicoes = c("gamma", "lognormal","normal","negbin","aplnormal", "apnormal")
+optimizadores = c('CG', 'spg', 'BFGS', 'Nelder-Mead')
+
+gdm_log_95 = data_frame(distr = character(),
+                        methods = character())
+modelos_gdm_95 = list()
+for(i in distribuicoes){
+  for(j in optimizadores){
+    tryCatch({
+      modelos_gdm_95[[length(modelos_gdm_95)+1]] = 
+        trialer(cat_df_2,
+                p = 15,
+                M = 0.01,
+                N0.ini = 60000, #millions, as in nmult
+                P = indice_manual_2,
+                P.ini  = list(
+                  30000,
+                  20000,20000,20000,
+                  20000,20000,20000,40000,20000,
+                  
+                  20000,20000,
+                  20000, 100000,20000,            #
+                  20000),
+                # 20000, 20000, 50000,20000,       
+                # 20000, 20000, 20000, 20000, 20000,
+                # 20000, 20000,40000,20000,20000), #2 elementos porque sao 2 perturbacaoes
+                k.ini = 0.00005,
+                alpha.ini = 0.85,
+                beta.ini  = 0.85,
+                distr = i,
+                method = j,
+                itnmax = 10000,
+                disp = list(100))
+      gdm_log_95[nrow(gdm_log_95)+1,1] = i
+      gdm_log_95[nrow(gdm_log_95),2] = j
+    },
+    error=function(e){print(paste(i,j))
+    })
+  }
+}
+
+
+resultados_95 = lapply(modelos_gdm_95, function(x){x$fit})
+pred_95 = lapply(modelos_gdm_95, function(x){x$pred})
+CatDynSum(x=resultados_95,
+          season=1995,
+          method=gdm_log_95$methods) %>% View
+
+# fit_null_2$fit$Model$CG$AIC
+# fit_null_2$fit$Model$CG$converg
 
 plotador(cat_df_2, fit_null_2, pre = F,
-         post1 = T,
+         post1 = F,
          post2 = T)
+
+
+
 
 ## 2006 - 2023
 
@@ -363,48 +414,106 @@ fit_null =
 
 fit_null$fit$Model$CG$AIC
 
+gdm_log_06 = data_frame(distr = character(),
+                        methods = character())
+modelos_gdm_06 = list()
+for(i in distribuicoes){
+  for(j in optimizadores){
+    tryCatch({
+      modelos_gdm_06[[length(modelos_gdm_06)+1]] = 
+        trialer(cat_df,
+                p = 18,
+                M = 0.01,
+                N0.ini = 60000, #millions, as in nmult
+                P = indice_manual,
+                P.ini  = list(
+                  # 20000,20000,20000,40000,20000,
+                  # 20000,20000,
+                  20000, 100000,20000,            #
+                  20000, 20000, 20000, 50000,20000,       
+                  20000, 20000, 20000, 20000, 20000,
+                  20000, 20000,40000,20000,20000), #2 elementos porque sao 2 perturbacaoes
+                k.ini = 0.00005,
+                alpha.ini = 0.85,
+                beta.ini  = 0.85,
+                distr = i,
+                method = j,
+                itnmax = 10000,
+                disp = list(100))
+      
+      gdm_log_06[nrow(gdm_log_06)+1,1] = i
+      gdm_log_06[nrow(gdm_log_06),2] = j
+    },
+    error=function(e){print(paste(i,j))
+    })
+  }
+}
+
+
+resultados_06 = lapply(modelos_gdm_06, function(x){x$fit})
+pred_06 = lapply(modelos_gdm_06, function(x){x$pred})
+CatDynSum(x=resultados_06,
+          season=2006,
+          method=gdm_log_06$methods) %>% View
+
 
 plotador(cat_df, fit_null, pre = F,
          post1 = T,
          post2 = T)
 
 
+save(fit_null, fit_null_2,
+     resultados_06, resultados_95,
+     file = '.data/preliminar_catdyn_fits.Rdata')
+
+load('.data/preliminar_catdyn_fits.Rdata')
+
 # Métricas para exportar
 
 # Biomassa anual
 # 
 
-fit_null_2$fit$Model$CG$bt.stdev[['beta.MIS+OTB-S']] = 0.05
+# fit_null_2$fit$Model$CG$bt.stdev[['beta.MIS+OTB-S']] = 0.05
 
-names(fit_null_2$fit$Model$CG)
-names(fit_null$fit$Model$CG)
+# gdm_95 = fit_null_2
+# gdm = fit_null
 
-j = 12
-fit_null$fit$Model$CG[names(fit_null_2$fit$Model$CG)[j]]
-fit_null_2$fit$Model$CG[names(fit_null_2$fit$Model$CG)[j]]
+res_95 = list()
+res_95$pred = pred_95[[17]]
+res_95$fit = resultados_95[[17]]
+
+res_06 = list()
+res_06$pred = pred_06[[11]]
+res_06$fit = resultados_06[[11]]
+
 
 annual_biomass_05 =
-  CatDynBSD_2(fit_null_2$fit,
-            method = 'CG',
+  CatDynBSD_2(res_95$fit,
+            method = names(res_95$fit$Model),
             multi = T,
             mbw.sd = predicos$se.fit)
 annual_biomass_23 =
-  CatDynBSD(fit_null$fit,
-            method = 'CG',
+  CatDynBSD(res_06$fit,
+            method = names(res_06$fit$Model),
             multi = T,
             mbw.sd = predicos$se.fit)
 
-
+annual_biomass = 
+  rbind(annual_biomass_05 %>% 
+          filter(Year %in% c(1995:2005)),
+        annual_biomass_23) %>% 
+  mutate(TimeStep = 1:348,
+         x =seq(1995,2023+11/12,1/12)) 
 
 # Inclui spict
 
 ## Carrega spict aqui
 load('.data/spict.Rdata')
 
-spict_biom = exp(res_spict$value[names(res_spict$value) == 'logBBmsy']) *
-  exp(res_spict$value[names(res_spict$value) == 'logBmsy'])
-
-res_spict$value[grepl('logB', names(res_spict$value))] %>% length()
+# spict_biom = exp(res_spict$value[names(res_spict$value) == 'logBBmsy']) *
+#   exp(res_spict$value[names(res_spict$value) == 'logBmsy'])
+# 
+# res_spict$value[grepl('logB', names(res_spict$value))] %>% length()
 
 
 dev.off()
@@ -413,7 +522,7 @@ dev.off()
 plotspict.biomass(res_spict)
 plotspict.biomass(res_spict, plot.obs = F)
 
-spict_biomass = spict::get.par('logB', res_spict) %>% 
+spict_biomass = spict::get.par('logB', res_spict, exp =T, CI = ) %>% 
   as.data.frame() %>% 
   mutate(x = row.names(.) %>% as.numeric)
 
@@ -421,35 +530,87 @@ spict_q = spict::get.par('logq', res_spict, exp = T, CI = 0.95)
 
 
 # Biomassa anual
-annual_biomass =
-CatDynBSD(fit_null$fit,
-          method = 'CG',
-          multi = T,
-          mbw.sd = predicos$se.fit)
-
-annual_biomass %>% 
+gridExtra::grid.arrange(
   ggplot() + 
-  geom_line(aes(x = TimeStep,
-                y = B.ton,
+  geom_line(aes(x = annual_biomass$x,
+                y = annual_biomass$B.ton,
                 group = 1),
             size = 1) +
-  geom_line(aes(x = TimeStep,
-                y = B.ton + 2*B.ton.SE,
-                group = 1),
-            linetype = 2,
-            size = 1) +
-  geom_line(aes(x = TimeStep,
-                y = B.ton - 2*B.ton.SE,
-                group = 1),
-            linetype = 2,
-            size = 1) + 
-  theme_bw()
+  geom_ribbon(aes(x = annual_biomass$x,
+                  y = annual_biomass$B.ton,
+                  ymin= annual_biomass$B.ton- 2*annual_biomass$B.ton.SE,
+                  ymax= annual_biomass$B.ton+ 2*annual_biomass$B.ton.SE),
+              alpha=0.2) +
+    # geom_line(aes(x = spict_biomass$x,
+    #               y = spict_biomass$est,
+    #               group = 1),
+    #           size = 1, color = 'darkred') +
+    # geom_ribbon(aes(x = spict_biomass$x,
+    #                 y = spict_biomass$est,
+    #                 ymin= spict_biomass$ll,
+    #                 ymax= spict_biomass$ul),
+    #             alpha=0.2, color = 'darkred') + 
+    
+  coord_cartesian(ylim = c(0, 300000), xlim = c(1995,2024)) +
+  theme_bw(),
+  ##
+  ncol = 1,
+  ##
+  ggplot() + 
+    # geom_line(aes(x = annual_biomass$x,
+    #               y = annual_biomass$B.ton,
+    #               group = 1),
+    #           size = 1) +
+    # geom_ribbon(aes(x = annual_biomass$x,
+    #                 y = annual_biomass$B.ton,
+    #                 ymin= annual_biomass$B.ton- 2*annual_biomass$B.ton.SE,
+    #                 ymax= annual_biomass$B.ton+ 2*annual_biomass$B.ton.SE),
+    #             alpha=0.2) +
+    geom_line(aes(x = spict_biomass$x,
+                  y = spict_biomass$est,
+                  group = 1),
+              size = 1, color = 'darkred') +
+    geom_ribbon(aes(x = spict_biomass$x,
+                    y = spict_biomass$est,
+                    ymin= spict_biomass$ll,
+                    ymax= spict_biomass$ul),
+                alpha=0.2, color = 'darkred') + 
+    geom_point(aes(x = unlist(res_spict$inp$timeI),
+                   y = unlist(res_spict$inp$obsI) / spict_q[2]),
+               color = 'red', size = 0.4) +
+    # geom_point(aes(x = unlist(res_spict$inp$timeC),
+    #                y = unlist(res_spict$inp$obsC)),
+    #            color = 'blue') +
+    
+    coord_cartesian(ylim = c(0, 300000), xlim = c(1995,2024)) +
+    theme_bw()
+  )
+
+
+unlist(res_spict$inp$obsI) / spict_q[2]
+
+  
 
 # Fishing Mortality
-results = fit_null$pred$Model$Results
 
-natural_mortality = fit_null$fit$Model$CG$bt.par$M
-natural_mortality_sd = fit_null$fit$Model$CG$bt.stdev[['M']]
+results = res_95$pred$Model$Results[1:132,] %>% 
+  rbind(.,
+        res_06$pred$Model$Results) %>% 
+  as.data.frame() %>% 
+  mutate(x = 1:348)
+
+natural_mortality_95 = res_95$fit$Model$spg$bt.par$M
+natural_mortality_95_sd = res_95$fit$Model$spg$bt.stdev[['M']]
+
+
+spict_fmort = spict::get.par('logF', res_spict, exp =T, CI = .95) %>% 
+  as.data.frame() %>% 
+  mutate(x = row.names(.) %>% as.numeric)
+
+spict_M = spict::get.par('m', res_spict,  CI = 0.95)
+
+spict_fmort$est / spict_biomass
+
 
 results %>% 
   ggplot() + 
@@ -462,19 +623,21 @@ results %>%
             col = 'darkred',
             size = 1,
             linetype = 2) + 
-  geom_hline(yintercept = natural_mortality,
+  geom_hline(yintercept = natural_mortality_95,
             col = 'darkgreen',
             size = 1,
             linetype = 1) +
-  geom_hline(yintercept = natural_mortality + 2*natural_mortality_sd,
+  geom_hline(yintercept = natural_mortality_95 + 2*natural_mortality_95_sd,
              col = 'darkgreen',
              size = 1,
              linetype = 2) +
-  geom_hline(yintercept = natural_mortality - 2*natural_mortality_sd,
+  geom_hline(yintercept = natural_mortality_95 - 2*natural_mortality_95_sd,
              col = 'darkgreen',
              size = 1,
              linetype = 2) +
   theme_bw()
+
+
 
 # Exploitation Rate
 
@@ -484,23 +647,20 @@ results %>%
                 y = `Observed.Explotrate`),
             col = 'tomato',
             size = 1) +
-  geom_line(aes(x = Period.month,
-                y = `Observed.Explotrate`*20),
-            col = 'blue',
-            size = 1) +
+
   geom_line(aes(x = Period.month,
                 y = `Predicted.Explotrate`),
             col = 'darkred',
             size = 1,
-            linetype = 2) + 
+            linetype = 2) +
   geom_line(aes(x = Period.month,
-                y = `Observed.F.1/month`/(`Observed.F.1/month`+natural_mortality)),
+                y = `Observed.F.1/month`/(`Observed.F.1/month`+natural_mortality_95)),
             col = 'purple',
             size = 1) +
-  geom_hline(yintercept = 0.4,
-             col = 'darkgreen',
-             size = 1,
-             linetype = 1) +
+  # geom_hline(yintercept = 0.4,
+  #            col = 'darkgreen',
+  #            size = 1,
+  #            linetype = 1) +
   theme_bw()
 
 
