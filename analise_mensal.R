@@ -3,6 +3,7 @@ library(CatDyn)
 library(ggplot2)
 library(Runuran)
 library(wesanderson)
+library(spict)
 # library(cuttlefish.model)
 set.seed(123)
 
@@ -464,6 +465,8 @@ plotador(cat_df, fit_null, pre = F,
 
 save(fit_null, fit_null_2,
      resultados_06, resultados_95,
+     pred_06, pred_95,
+     gdm_log_06, gdm_log_95,
      file = '.data/preliminar_catdyn_fits.Rdata')
 
 load('.data/preliminar_catdyn_fits.Rdata')
@@ -508,7 +511,7 @@ annual_biomass =
 # Inclui spict
 
 ## Carrega spict aqui
-load('.data/spict.Rdata')
+load('.data/spict_time_corrigido.Rdata')
 
 # spict_biom = exp(res_spict$value[names(res_spict$value) == 'logBBmsy']) *
 #   exp(res_spict$value[names(res_spict$value) == 'logBmsy'])
@@ -524,7 +527,8 @@ plotspict.biomass(res_spict, plot.obs = F)
 
 spict_biomass = spict::get.par('logB', res_spict, exp =T, CI = ) %>% 
   as.data.frame() %>% 
-  mutate(x = row.names(.) %>% as.numeric)
+  mutate(x = row.names(.) %>% as.numeric) %>% 
+  mutate(x = 1995+ x/12)
 
 spict_q = spict::get.par('logq', res_spict, exp = T, CI = 0.95)
 
@@ -557,32 +561,32 @@ gridExtra::grid.arrange(
   ncol = 1,
   ##
   ggplot() + 
-    # geom_line(aes(x = annual_biomass$x,
-    #               y = annual_biomass$B.ton,
-    #               group = 1),
-    #           size = 1) +
+    geom_line(aes(x = annual_biomass$x,
+                  y = annual_biomass$B.ton,
+                  group = 1),
+              size = 1) +
     # geom_ribbon(aes(x = annual_biomass$x,
     #                 y = annual_biomass$B.ton,
     #                 ymin= annual_biomass$B.ton- 2*annual_biomass$B.ton.SE,
     #                 ymax= annual_biomass$B.ton+ 2*annual_biomass$B.ton.SE),
     #             alpha=0.2) +
-    geom_line(aes(x = spict_biomass$x,
-                  y = spict_biomass$est,
-                  group = 1),
-              size = 1, color = 'darkred') +
+    # geom_line(aes(x = spict_biomass$x,
+    #               y = spict_biomass$est,
+    #               group = 1),
+    #           size = 1, color = 'darkred') +
     geom_ribbon(aes(x = spict_biomass$x,
-                    y = spict_biomass$est,
-                    ymin= spict_biomass$ll,
-                    ymax= spict_biomass$ul),
-                alpha=0.2, color = 'darkred') + 
-    geom_point(aes(x = unlist(res_spict$inp$timeI),
+                    y = spict_biomass$est/1000,
+                    ymin= spict_biomass$ll/1000,
+                    ymax= spict_biomass$ul/1000),
+                alpha=0.2, color = 'darkred') +
+    geom_point(aes(x = 1995 + unlist(res_spict$inp$timeI)/12,
                    y = unlist(res_spict$inp$obsI) / spict_q[2]),
-               color = 'red', size = 0.4) +
-    # geom_point(aes(x = unlist(res_spict$inp$timeC),
-    #                y = unlist(res_spict$inp$obsC)),
-    #            color = 'blue') +
-    
-    coord_cartesian(ylim = c(0, 300000), xlim = c(1995,2024)) +
+    color = 'red', size = 0.4) +
+    geom_point(aes(x = 1995 + unlist(res_spict$inp$timeC)/12,
+                   y = unlist(res_spict$inp$obsC)),
+               color = 'blue') +
+
+    # coord_cartesian(ylim = c(0, 300000), xlim = c(1995,2024)) +
     theme_bw()
   )
 

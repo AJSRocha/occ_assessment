@@ -1,0 +1,200 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r}
+library(RTMB)
+library(tidyverse)
+library(CatDyn)
+library(wesanderson)
+```
+
+```{r}
+load('.data/df_effort_m_mbw_otb.Rdata')
+
+set.seed(123)
+
+# Funcoes catdyn
+source('.scripts/custom_catdyn_fit.R')
+source('.scripts/custom_catdyn_bsd.R')
+source('.scripts/funcoes_catdyn.R')
+
+```
+
+# Situação de referência: 2019-2023
+
+```{r}
+cat_df = as.CatDynData(x=df_effort %>% 
+                           filter(as.numeric(
+                             as.character(year_sale)) %in% c(2019:2023)),
+                         step="month",
+                         fleet.name="MIS+OTB-S",
+                         coleff=6,
+                         colcat=5,
+                         colmbw=9,
+                         unitseff="trips",
+                         unitscat="kg",
+                         unitsmbw="kg",
+                         nmult="thou",
+                         season.dates=c(as.Date("2019-01-01"),
+                                        # as.Date("1995-12-24")))
+                                        last_date_of_week(2023, 52)-1))
+
+indice_manual =  list(12,12,12,12,10)
+
+for(i in 0:(length(indice_manual)-1)){
+  indice_manual[[i+1]] = 12*i + indice_manual[[i+1]]
+}
+
+unlist(indice_manual)
+
+fit_null =
+  trialer(cat_df,
+          p = 5,
+          M = 0.01,
+          N0.ini = 60000, #millions, as in nmult
+          P = indice_manual,
+          P.ini  = list(
+            20000, 20000,40000,20000,20000), #2 elementos porque sao 2 perturbacaoes
+          k.ini = 0.0005,
+          alpha.ini = 0.9,
+          beta.ini  = 0.9,
+          distr = 'aplnormal',
+          method = 'CG',
+          itnmax = 10000,
+          disp = list(100))
+
+fit_null$fit$Model$CG$AIC
+
+fit_null
+```
+
+O nosso dataframe adaptado, usando as mesmas estimativas de peso medio
+
+```{r}
+df =
+df_effort %>% 
+  filter(year_sale %in% c(2019:2023)) %>% 
+  mutate(N = catch/mbw_rand,
+         time.step = 1:60) 
+   
+ggplot() + 
+  geom_line(aes(x = df$time.step,
+                y = df$N,
+                group = 1), color = 'purple') +
+  geom_line(aes(y = fit_null$fit$Data$Data$`MIS+OTB-S`$obscat.thou * 1000,
+                x = fit_null$fit$Data$Data$`MIS+OTB-S`$time.step,
+                group = 1), color = 'red') +
+  geom_line(aes(x = fit_null$fit$Data$Data$`MIS+OTB-S`$time.step,
+                y = fit_null$pred$Model$Results$Predicted.Catch.thou*1000,
+                group = 1), color = 'darkgreen', linetype = 'dashed') + 
+  theme_bw()
+```
+
+Agora recriamos o modelo no R para confirmar que o estamos a processar correctamente
+Vamos buscar as estimativas dos parametros que estamos a usar neste ensaio
+
+```{r}
+pars_ref = fit_null$fit$Model$CG$bt.par
+pars_ref
+```
+
+Criamos as funções que estimam a serie de capturas
+
+```{r}
+# funcoes para simular catdyn
+catch_module = function(index,M){ #index é o t na formulacao original
+  res = 0
+  for(i in 2:index-1){
+    res = res + dados$Ct[i]*exp(-M*(index-i-1))
+  }
+  return(res)
+}
+
+recruit_module = function(index, M){ #index é o t na formulacao original
+  contador = 1
+  res = 0
+  while(perturbacoes$timing[contador] <= index){
+    res = res + perturbacoes$R[contador] * exp(-M*(index-perturbacoes$timing[contador]))
+    if(contador == nrow(perturbacoes)){break()}
+    contador = contador + 1
+  }
+  return(res)
+}
+
+simulador = function(dados, k, alpha,
+                     beta, M, N0){
+  res = c()
+  for(i in 1:nrow(dados)){
+    if(i == 1){# t0
+      res[i] = k * dados$obseff.trips[i]^ alpha * exp(-M/2) * (
+        N0 * exp(-M*i) -
+          exp(-M/2) * (0) # catch
+        + 0# recrutamento
+      )^beta 
+    }
+    else{
+      res[i] = k * dados$obseff.trips[i]^ alpha * exp(-M/2) * (
+        N0 * exp(-M*i) -
+          exp(-M/2) * catch_module(i,M) # catch
+        + recruit_module(i,M)# recrutamento
+      )^beta
+    }
+  }
+  
+  return(res)
+}
+
+```
+
+Corremos o modelo com as estimativas do ensaio
+
+```{r}
+dados = cat_df$Data$`MIS+OTB-S`
+dados$Ct = 0
+P.ini  = list(20000, 20000,40000,20000,20000)
+
+perturbacoes = data.frame(
+  year = 2019:2023,
+  R = unlist(P.ini),
+  timing = unlist(indice_manual))
+
+estim = 
+simulador(dados,
+          k = pars_ref$`k.MIS+OTB-S`,
+          alpha = pars_ref$`alpha.MIS+OTB-S`,
+          beta = pars_ref$`beta.MIS+OTB-S`,
+          M = pars_ref$M,
+          N0 = pars_ref$N0)
+```
+
+Olhando para resultados:
+
+```{r}
+df =
+df_effort %>% 
+  filter(year_sale %in% c(2019:2023)) %>% 
+  mutate(N = catch/mbw_rand,
+         time.step = 1:60) 
+   
+ggplot() + 
+  # geom_line(aes(x = df$time.step,
+  #               y = df$N,
+  #               group = 1), color = 'purple') +
+  # geom_line(aes(y = fit_null$fit$Data$Data$`MIS+OTB-S`$obscat.thou * 1000,
+  #               x = fit_null$fit$Data$Data$`MIS+OTB-S`$time.step,
+  #               group = 1), color = 'red') +
+  geom_line(aes(x = fit_null$fit$Data$Data$`MIS+OTB-S`$time.step,
+                y = fit_null$pred$Model$Results$Predicted.Catch.thou*1000,
+                group = 1), color = 'darkgreen', linetype = 'dashed') + 
+  geom_line(aes(x = df$time.step,
+                y = estim * 1000,
+                group = 1),
+            col = 'blue', linetype = 'dashed') + 
+  theme_bw()
+```
+
+
