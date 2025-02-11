@@ -511,7 +511,7 @@ annual_biomass =
 # Inclui spict
 
 ## Carrega spict aqui
-load('.data/spict_time_corrigido.Rdata')
+# load('.data/spict_time_corrigido.Rdata')
 
 # spict_biom = exp(res_spict$value[names(res_spict$value) == 'logBBmsy']) *
 #   exp(res_spict$value[names(res_spict$value) == 'logBmsy'])
@@ -522,20 +522,20 @@ load('.data/spict_time_corrigido.Rdata')
 dev.off()
 
 
-plotspict.biomass(res_spict)
-plotspict.biomass(res_spict, plot.obs = F)
+# plotspict.biomass(res_spict)
+# plotspict.biomass(res_spict, plot.obs = F)
 
-spict_biomass = spict::get.par('logB', res_spict, exp =T, CI = ) %>% 
-  as.data.frame() %>% 
-  mutate(x = row.names(.) %>% as.numeric) %>% 
-  mutate(x = 1995+ x/12)
+# spict_biomass = spict::get.par('logB', res_spict, exp =T, CI = ) %>% 
+#   as.data.frame() %>% 
+#   mutate(x = row.names(.) %>% as.numeric) %>% 
+#   mutate(x = 1995+ x/12)
 
-spict_q = spict::get.par('logq', res_spict, exp = T, CI = 0.95)
+# spict_q = spict::get.par('logq', res_spict, exp = T, CI = 0.95)
 
 
 # Biomassa anual
-gridExtra::grid.arrange(
-  ggplot() + 
+# 
+ggplot() + 
   geom_line(aes(x = annual_biomass$x,
                 y = annual_biomass$B.ton,
                 group = 1),
@@ -545,53 +545,80 @@ gridExtra::grid.arrange(
                   ymin= annual_biomass$B.ton- 2*annual_biomass$B.ton.SE,
                   ymax= annual_biomass$B.ton+ 2*annual_biomass$B.ton.SE),
               alpha=0.2) +
-    # geom_line(aes(x = spict_biomass$x,
-    #               y = spict_biomass$est,
-    #               group = 1),
-    #           size = 1, color = 'darkred') +
-    # geom_ribbon(aes(x = spict_biomass$x,
-    #                 y = spict_biomass$est,
-    #                 ymin= spict_biomass$ll,
-    #                 ymax= spict_biomass$ul),
-    #             alpha=0.2, color = 'darkred') + 
-    
+  # geom_line(aes(x = spict_biomass$x,
+  #               y = spict_biomass$est,
+  #               group = 1),
+  #           size = 1, color = 'darkred') +
+  # geom_ribbon(aes(x = spict_biomass$x,
+  #                 y = spict_biomass$est,
+  #                 ymin= spict_biomass$ll,
+  #                 ymax= spict_biomass$ul),
+  #             alpha=0.2, color = 'darkred') + 
+  
   coord_cartesian(ylim = c(0, 300000), xlim = c(1995,2024)) +
-  theme_bw(),
-  ##
-  ncol = 1,
-  ##
-  ggplot() + 
-    geom_line(aes(x = annual_biomass$x,
-                  y = annual_biomass$B.ton,
-                  group = 1),
-              size = 1) +
-    # geom_ribbon(aes(x = annual_biomass$x,
-    #                 y = annual_biomass$B.ton,
-    #                 ymin= annual_biomass$B.ton- 2*annual_biomass$B.ton.SE,
-    #                 ymax= annual_biomass$B.ton+ 2*annual_biomass$B.ton.SE),
-    #             alpha=0.2) +
-    # geom_line(aes(x = spict_biomass$x,
-    #               y = spict_biomass$est,
-    #               group = 1),
-    #           size = 1, color = 'darkred') +
-    geom_ribbon(aes(x = spict_biomass$x,
-                    y = spict_biomass$est/1000,
-                    ymin= spict_biomass$ll/1000,
-                    ymax= spict_biomass$ul/1000),
-                alpha=0.2, color = 'darkred') +
-    geom_point(aes(x = 1995 + unlist(res_spict$inp$timeI)/12,
-                   y = unlist(res_spict$inp$obsI) / spict_q[2]),
-    color = 'red', size = 0.4) +
-    geom_point(aes(x = 1995 + unlist(res_spict$inp$timeC)/12,
-                   y = unlist(res_spict$inp$obsC)),
-               color = 'blue') +
+  theme_bw()
 
-    # coord_cartesian(ylim = c(0, 300000), xlim = c(1995,2024)) +
-    theme_bw()
-  )
+# 
+# 
+# 
+# gridExtra::grid.arrange(
+#   ggplot() + 
+#   geom_line(aes(x = annual_biomass$x,
+#                 y = annual_biomass$B.ton,
+#                 group = 1),
+#             size = 1) +
+#   geom_ribbon(aes(x = annual_biomass$x,
+#                   y = annual_biomass$B.ton,
+#                   ymin= annual_biomass$B.ton- 2*annual_biomass$B.ton.SE,
+#                   ymax= annual_biomass$B.ton+ 2*annual_biomass$B.ton.SE),
+#               alpha=0.2) +
+#     # geom_line(aes(x = spict_biomass$x,
+#     #               y = spict_biomass$est,
+#     #               group = 1),
+#     #           size = 1, color = 'darkred') +
+#     # geom_ribbon(aes(x = spict_biomass$x,
+#     #                 y = spict_biomass$est,
+#     #                 ymin= spict_biomass$ll,
+#     #                 ymax= spict_biomass$ul),
+#     #             alpha=0.2, color = 'darkred') + 
+#     
+#   coord_cartesian(ylim = c(0, 300000), xlim = c(1995,2024)) +
+#   theme_bw(),
+#   ##
+#   ncol = 1,
+#   ##
+#   ggplot() + 
+#     geom_line(aes(x = annual_biomass$x,
+#                   y = annual_biomass$B.ton,
+#                   group = 1),
+#               size = 1) +
+#     # geom_ribbon(aes(x = annual_biomass$x,
+#     #                 y = annual_biomass$B.ton,
+#     #                 ymin= annual_biomass$B.ton- 2*annual_biomass$B.ton.SE,
+#     #                 ymax= annual_biomass$B.ton+ 2*annual_biomass$B.ton.SE),
+#     #             alpha=0.2) +
+#     # geom_line(aes(x = spict_biomass$x,
+#     #               y = spict_biomass$est,
+#     #               group = 1),
+#     #           size = 1, color = 'darkred') +
+#     geom_ribbon(aes(x = spict_biomass$x,
+#                     y = spict_biomass$est/1000,
+#                     ymin= spict_biomass$ll/1000,
+#                     ymax= spict_biomass$ul/1000),
+#                 alpha=0.2, color = 'darkred') +
+#     geom_point(aes(x = 1995 + unlist(res_spict$inp$timeI)/12,
+#                    y = unlist(res_spict$inp$obsI) / spict_q[2]),
+#     color = 'red', size = 0.4) +
+#     geom_point(aes(x = 1995 + unlist(res_spict$inp$timeC)/12,
+#                    y = unlist(res_spict$inp$obsC)),
+#                color = 'blue') +
+# 
+#     # coord_cartesian(ylim = c(0, 300000), xlim = c(1995,2024)) +
+#     theme_bw()
+#   )
 
 
-unlist(res_spict$inp$obsI) / spict_q[2]
+# unlist(res_spict$inp$obsI) / spict_q[2]
 
   
 
@@ -606,14 +633,14 @@ results = res_95$pred$Model$Results[1:132,] %>%
 natural_mortality_95 = res_95$fit$Model$spg$bt.par$M
 natural_mortality_95_sd = res_95$fit$Model$spg$bt.stdev[['M']]
 
+# 
+# spict_fmort = spict::get.par('logF', res_spict, exp =T, CI = .95) %>% 
+#   as.data.frame() %>% 
+#   mutate(x = row.names(.) %>% as.numeric)
 
-spict_fmort = spict::get.par('logF', res_spict, exp =T, CI = .95) %>% 
-  as.data.frame() %>% 
-  mutate(x = row.names(.) %>% as.numeric)
+# spict_M = spict::get.par('m', res_spict,  CI = 0.95)
 
-spict_M = spict::get.par('m', res_spict,  CI = 0.95)
-
-spict_fmort$est / spict_biomass
+# spict_fmort$est / spict_biomass
 
 
 results %>% 
