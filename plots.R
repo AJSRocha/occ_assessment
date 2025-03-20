@@ -16,5 +16,5 @@ df_effort %>%
   theme(axis.text.x = element_text(angle = 90))
 
 
-ggsave(fig1, dpi = 300, units = 'cm',
-       height = 10, width = 10, filename = 'figures/landings.png')
+ggsave(fig1, dpi = 300, units = 'cm', device = 'eps',
+       height = 10, width = 10, filename = 'figures/landings.eps')
